@@ -10,27 +10,29 @@ import sys
 import json
 import time
 import threading
-from datetime import datetime, timezone, timedelta 
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List
 from zoneinfo import ZoneInfo
 from argparse import ArgumentParser
 
-from werkzeug.middleware.proxy_fix import ProxyFix 
+from werkzeug.middleware.proxy_fix import ProxyFix
 from flask import Flask, request, abort, render_template, jsonify, render_template_string
+
+import proxy
 
 # ... (省略 LINE Bot 相關設定) ...
 
 app = Flask(__name__)
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1) 
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # --- 核心配置與全局狀態 (保持不變) ---
 MAX_NETWORK_LATENCY = 5
 BASE_CLIENT_TIMEOUT = 600 + MAX_NETWORK_LATENCY
-CST_TIMEZONE = ZoneInfo('Asia/Taipei') 
+CST_TIMEZONE = ZoneInfo('Asia/Taipei')
 
-data_lock = threading.Lock() 
-current_waiting_event: threading.Event | None = None 
-current_response_data: Dict[str, Any] | None = None 
+data_lock = threading.Lock()
+current_waiting_event: threading.Event | None = None
+current_response_data: Dict[str, Any] | None = None
 
 TICKET_DIR = "./"
 TICKET_REQUEST_FILE = os.path.join(TICKET_DIR, "ticket_requests.json")
@@ -90,14 +92,14 @@ def push_task_to_client(task_data: Dict[str, Any]):
         notifications_sent = 0
         if current_waiting_event:
             current_response_data = {"status": "success", "data": task_data.copy()}
-            current_waiting_event.set() 
+            current_waiting_event.set()
             notifications_sent = 1
     print(f"[{time.strftime('%H:%M:%S')}] ✅ PUSHED: New booking task (ID: {task_data.get('id')}). Waking up {notifications_sent} client.")
 
 # --- 新增：數據格式化函式 ---
 def format_ticket_data(ticket: Dict[str, Any]) -> Dict[str, Any]:
     """將單筆訂票數據格式化為前端表格所需的精簡格式"""
-    
+
     # 訂票日期 (Order Date): 格式 'hh:mm'
     try:
         # 假設 order_date 格式為 "YYYY-MM-DD HH:MM:SS"
@@ -105,7 +107,7 @@ def format_ticket_data(ticket: Dict[str, Any]) -> Dict[str, Any]:
         formatted_order_date = order_dt.strftime("%H:%M")
     except Exception:
         formatted_order_date = "N/A"
-        
+
     # 乘車日期 (Travel Date): 格式 'MM/DD'
     try:
         # 假設 travel_date 格式為 "YYYY-MM-DD"
@@ -117,13 +119,13 @@ def format_ticket_data(ticket: Dict[str, Any]) -> Dict[str, Any]:
     # 組合時間地點資訊
     from_info = f"{ticket.get('from_station', 'N/A')} {ticket.get('from_time', 'N/A')}"
     to_info = f"{ticket.get('to_station', 'N/A')} {ticket.get('to_time', 'N/A')}"
-    
+
     # 創建新的精簡字典
     formatted_ticket = {
         "id": ticket["id"],
-        "status": ticket.get("status"), 
+        "status": ticket.get("status"),
         "result": ticket.get("status", "N/A"),
-        "code": ticket.get("code", "N/A"), 
+        "code": ticket.get("code", "N/A"),
         "name": ticket.get("name", "N/A"),
         "id_number": ticket.get("id_number", "N/A"), # 雖然表格不顯示，但保留原始數據
         "train_no": ticket.get("train_no", "N/A"),
@@ -174,7 +176,7 @@ def index():
 def api_submit_ticket():
     try:
         data = request.get_json()
-        
+
         if not data:
             return jsonify({"status": "error", "message": "Missing JSON data in request body."}), 400
 
@@ -182,7 +184,7 @@ def api_submit_ticket():
         for field in required_fields:
             if not data.get(field):
                  return jsonify({"status": "error", "message": f"Missing required field: {field}"}), 400
-                 
+
         ticket = {
             "id": get_new_id(),
             "status": "待處理",
@@ -197,20 +199,20 @@ def api_submit_ticket():
             "to_time": data["to_time"],
             "code": None
         }
-        
+
         requests = load_json(TICKET_REQUEST_FILE)
         requests.append(ticket)
         save_json(TICKET_REQUEST_FILE, requests)
         # 新增：自動新增乘客資料
         add_passenger_if_new(ticket["name"], ticket["id_number"])
         push_task_to_client(ticket)
-        
+
         print(f"[{time.strftime('%H:%M:%S')}] 📝 JSON SUBMIT: New task ID {ticket['id']} created.")
         return jsonify({
-            "status": "success", 
+            "status": "success",
             "message": "Booking task submitted successfully.",
             "task_id": ticket["id"]
-        }), 201 
+        }), 201
 
     except Exception as e:
         print(f"[{time.strftime('%H:%M:%S')}] ❌ JSON SUBMIT UNKNOWN ERROR: {e}")
@@ -221,20 +223,20 @@ def api_submit_ticket():
 @app.route("/history.html")
 def history():
     history_data = load_json(TICKET_HISTORY_FILE)
-    
+
     # 應用格式化函式，將格式化後的數據傳遞給 history.html
     formatted_history = [format_ticket_data(h) for h in history_data]
-    
+
     return render_template("history.html", history=formatted_history)
 
 # 4. AJAX 短輪詢路由 (已修改：使用格式化數據和新模板)
 @app.route("/api/pending_table", methods=["GET"])
 def api_pending_table():
     requests = load_json(TICKET_REQUEST_FILE)
-    
+
     # 應用格式化函式
     formatted_requests = [format_ticket_data(r) for r in requests]
-    
+
     # 新的模板字串，配合 index.html 的新表頭
     template_str = """
     {% for r in formatted_requests %}
@@ -254,7 +256,7 @@ def api_pending_table():
     </tr>
     {% endfor %}
     """
-    
+
     rendered_html = render_template_string(template_str, formatted_requests=formatted_requests)
     return rendered_html, 200
 
@@ -281,7 +283,7 @@ def long_poll_endpoint():
         return jsonify({
             "status": "initial_sync",
             "message": "Found pending tasks in queue.",
-            "data": requests.copy() 
+            "data": requests.copy()
         }), 200
 
     new_client_event = threading.Event()
@@ -290,25 +292,25 @@ def long_poll_endpoint():
         if current_waiting_event:
             current_response_data = {"status": "forced_reconnect", "message": "New poll initiated. Please re-poll immediately."}
             current_waiting_event.set()
-        
+
         current_waiting_event = new_client_event
         current_response_data = None
-    
+
     is_triggered = new_client_event.wait(timeout=max_wait_time_server)
-    
+
     with data_lock:
         response_payload = current_response_data
         if new_client_event == current_waiting_event:
             current_waiting_event = None
             current_response_data = None
-            
+
     if response_payload:
         return jsonify(response_payload), 200
-    
+
     if not is_triggered:
         print(f"[{time.strftime('%H:%M:%S')}] Timeout reached. Sending 'No Update' response.")
         return jsonify({"status": "timeout", "message": "No new events."}), 200
-        
+
     return jsonify({"status": "internal_error", "message": "Unknown trigger state."}), 500
 
 
@@ -319,12 +321,12 @@ def update_status():
     try:
         data = request.get_json()
         task_id = data.get('task_id')
-        status = data.get('status') 
+        status = data.get('status')
         details = data.get('details', {})
-        
+
         if not task_id or not status:
             return jsonify({"status": "error", "message": "Missing task_id or status"}), 400
-        
+
         task_id = int(task_id)
 
         with data_lock:
@@ -335,26 +337,26 @@ def update_status():
                     ticket["status"] = status
                     ticket["result_details"] = details
                     ticket["completion_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    
+
                     if details.get("code"):
                         ticket["code"] = details["code"]
-                    
+
                     if status in ["booked", "failed"]:
                         requests.remove(ticket)
                         history_data = load_json(TICKET_HISTORY_FILE)
                         history_data.append(ticket)
                         save_json(TICKET_HISTORY_FILE, history_data)
-                    
+
                     found = True
                     break
-            
+
             save_json(TICKET_REQUEST_FILE, requests)
-        
+
         if found:
             return jsonify({"status": "success", "message": f"Task {task_id} status updated to {status}."}), 200
         else:
             return jsonify({"status": "not_found", "message": f"Task {task_id} not found."}), 404
-            
+
     except Exception as e:
         print(f"[{time.strftime('%H:%M:%S')}] ❌ STATUS UPDATE UNKNOWN ERROR: {e}")
         return jsonify({"status": "internal_error", "message": str(e)}), 500
@@ -374,6 +376,25 @@ def add_passenger_if_new(name, id_number):
     }
     passengers.append(new_passenger)
     save_json(PASSENGER_FILE, passengers)
+
+# --- 新增路由：在背景執行 proxy.main() ---
+proxy_thread = None
+
+@app.route("/proxy", methods=["GET", "POST"])
+def proxy_route():
+    """
+    啟動 proxy.main() 在背景執行。若已在執行中則回傳狀態。
+    """
+    global proxy_thread
+    with data_lock:
+        if proxy_thread and proxy_thread.is_alive():
+            return jsonify({"status": "running", "message": "Proxy already running."}), 200
+
+        # 建立並啟動背景執行緒
+        proxy_thread = threading.Thread(target=proxy.main, daemon=True)
+        proxy_thread.start()
+
+    return jsonify({"status": "started", "message": "Proxy started in background."}), 202
 
 @app.route("/passenger.html", methods=["GET", "POST"])
 def passenger_page():
