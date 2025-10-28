@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>高鐵訂票系統</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        /* (CSS 樣式保持不變) */
+        body { font-family: "Noto Sans TC", Arial, sans-serif; background: #f7f7fa; margin: 0; padding: 0; }
+        header { background: #1565c0; color: #fff; padding: 1.5rem 0; text-align: center; letter-spacing: 0.1em; font-size: 2rem; margin-bottom: 2rem; box-shadow: 0 2px 8px #ccc; }
+        .container { max-width: 900px; margin: 0 auto; background: #fff; border-radius: 10px; box-shadow: 0 2px 12px #ddd; padding: 2rem 2.5rem 2.5rem 2.5rem; }
+        h2, h3 { color: #1565c0; margin-top: 0; }
+        form { display: flex; flex-wrap: wrap; gap: 1.2rem 2rem; margin-bottom: 2rem; align-items: flex-end; }
+        form label { display: flex; flex-direction: column; font-weight: bold; color: #333; font-size: 1rem; flex: 1 1 180px; min-width: 140px; }
+        form input { padding: 0.5rem; border: 1px solid #bbb; border-radius: 5px; font-size: 1rem; margin-top: 0.3rem; }
+        form button { background: #1565c0; color: #fff; border: none; border-radius: 5px; padding: 0.7rem 2rem; font-size: 1.1rem; cursor: pointer; margin-top: 1.2rem; transition: background 0.2s; }
+        form button:hover { background: #003c8f; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; background: #fafbfc; font-size: 1rem; }
+        th, td { border: 1px solid #e0e0e0; padding: 0.7rem 0.5rem; text-align: center; word-break: break-all; }
+        th { background: #e3f2fd; color: #1565c0; font-weight: bold; }
+        tr:nth-child(even) { background: #f9f9f9; }
+        .link-history { display: inline-block; margin-top: 1rem; color: #1565c0; text-decoration: none; font-weight: bold; border: 1px solid #1565c0; border-radius: 5px; padding: 0.5rem 1.2rem; transition: background 0.2s, color 0.2s; }
+        .link-history:hover { background: #1565c0; color: #fff; }
+        .link-passenger {
+            display: inline-block;
+            margin-top: 1rem;
+            color: #1565c0;
+            text-decoration: none;
+            font-weight: bold;
+            border: 1px solid #1565c0;
+            border-radius: 5px;
+            padding: 0.5rem 1.2rem;
+            transition: background 0.2s, color 0.2s;
+            margin-left: 1rem;
+        }
+        .link-passenger:hover {
+            background: #1565c0;
+            color: #fff;
+        }
+        @media (max-width: 600px) { .container { padding: 0.5rem; } header { font-size: 1.3rem; padding: 1rem 0; } h2, h3 { font-size: 1.1rem; } form { display: block; margin-bottom: 1.2rem; gap: 0; padding: 0.5rem 0.2rem 0.5rem 0.2rem; background: #f3f7fc; border-radius: 8px; box-shadow: 0 1px 4px #e0e0e0; } form label { flex: unset; min-width: unset; font-size: 1rem; margin-bottom: 0.5rem; align-items: flex-start; font-weight: 500; } form input { font-size: 1rem; margin-top: 0.2rem; width: 100%; box-sizing: border-box; border-radius: 5px; } form button { width: 100%; font-size: 1.05rem; margin-top: 0.7rem; padding: 0.6rem 0; } }
+        @media (max-width: 420px) { .container { padding: 0.2rem; } table, th, td { font-size: 0.75rem; } form label { font-size: 0.95rem; } }
+    </style>
+</head>
+<body>
+    <header>高鐵訂票系統</header>
+    <div class="container">
+        <h2>訂票表單</h2>
+        <form id="booking-form"> 
+            <label>姓名<input name="name" required autocomplete="off"></label>
+            <label>身分證字號<input name="id_number" required autocomplete="off"></label>
+            <label>車次<input name="train_no" required autocomplete="off"></label>
+            <label>乘車日期<input name="travel_date" type="date" required></label>
+            <label>出發地點<input name="from_station" required autocomplete="off"></label>
+            <label>出發時間<input name="from_time" type="time" required></label>
+            <label>到達地點<input name="to_station" required autocomplete="off"></label>
+            <label>到達時間<input name="to_time" type="time" required></label>
+            <button type="submit">送出訂票</button>
+        </form>
+        <h3>目前訂票資訊 (自動更新)</h3>
+        <div style="overflow-x:auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>id</th>
+                    <th>訂票狀況</th>
+                    <th>訂票時間</th>
+                    <th>姓名</th>
+                    <th>車次</th>
+                    <th>乘車日期</th>
+                    <th>出發時間地點</th>
+                    <th>到達時間地點</th>
+                </tr>
+            </thead>
+            <tbody id="pending-tasks-body">
+                {% for r in requests %}
+                <tr>
+                    <td>{{ r.id }}</td>
+                    <td>{{ r.status }}</td>
+                    <td>{{ r.formatted_order_date }}</td>
+                    <td>{{ r.name }}</td>
+                    <td>{{ r.train_no }}</td>
+                    <td>{{ r.formatted_travel_date }}</td>
+                    <td>{{ r.from_info }}</td>
+                    <td>{{ r.to_info }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="8">目前沒有待處理的訂票任務。</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        <a class="link-history" href="/history.html">歷史訂票資訊</a>
+        <a class="link-passenger" href="/passenger.html">乘客個人資料</a>
+    </div>
+    
+    <script>
+        // --- 狀態 AJAX 短輪詢腳本 (保持不變) ---
+        const POLLING_INTERVAL_MS = 10000; 
+        const tableBody = document.querySelector('#pending-tasks-body'); 
+    
+        function fetchAndUpdateStatus() {
+            fetch('/api/pending_table')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.text(); 
+                })
+                .then(html => {
+                    if (tableBody) {
+                        tableBody.innerHTML = html;
+                    }
+                })
+                .catch(error => {
+                    console.error(`[${new Date().toLocaleTimeString()}] Error fetching status:`, error);
+                });
+        }
+    
+        fetchAndUpdateStatus();
+        setInterval(fetchAndUpdateStatus, POLLING_INTERVAL_MS);
+
+
+        // --- JSON 提交處理腳本 (保持不變) ---
+        const form = document.getElementById('booking-form');
+        const API_SUBMIT_URL = '/api/submit_ticket'; 
+
+        form.addEventListener('submit', function(event) {
+            event.preventDefault(); 
+
+            const formData = new FormData(form);
+            const data = {};
+            formData.forEach((value, key) => {
+                data[key] = value;
+            });
+
+            fetch(API_SUBMIT_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json', 
+                },
+                body: JSON.stringify(data) 
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.status === 'success') {
+                    alert(`訂票任務已成功提交！任務 ID: ${result.task_id}`);
+                    form.reset(); 
+                    fetchAndUpdateStatus(); 
+                } else {
+                    alert('提交失敗: ' + result.message);
+                }
+            })
+            .catch(error => {
+                console.error('提交錯誤:', error);
+                alert('網路連線或伺服器發生錯誤。');
+            });
+        });
+    </script>
+</body>
+</html>

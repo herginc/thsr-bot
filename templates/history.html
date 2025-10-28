@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>歷史訂票資訊</title>
+    <style>
+        /* (CSS 樣式保持不變) */
+        body { font-family: "Noto Sans TC", Arial, sans-serif; background: #f7f7fa; margin: 0; padding: 0; }
+        header { background: #1565c0; color: #fff; padding: 1.5rem 0; text-align: center; letter-spacing: 0.1em; font-size: 2rem; margin-bottom: 2rem; box-shadow: 0 2px 8px #ccc; }
+        .container { max-width: 900px; margin: 0 auto; background: #fff; border-radius: 10px; box-shadow: 0 2px 12px #ddd; padding: 2rem 2.5rem 2.5rem 2.5rem; }
+        h2, h3 { color: #1565c0; margin-top: 0; }
+        a { color: #1565c0; text-decoration: none; margin-bottom: 1rem; display: block; font-weight: bold; }
+        a:hover { text-decoration: underline; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; background: #fafbfc; font-size: 1rem; }
+        th, td { border: 1px solid #e0e0e0; padding: 0.7rem 0.5rem; text-align: center; word-break: break-all; }
+        th { background: #e3f2fd; color: #1565c0; font-weight: bold; }
+        tr:nth-child(even) { background: #f9f9f9; }
+        @media (max-width: 600px) { .container { padding: 0.5rem; } header { font-size: 1.3rem; padding: 1rem 0; } h2 { font-size: 1.1rem; } table, th, td { font-size: 0.75rem; } }
+    </style>
+</head>
+<body>
+    <header>歷史訂票資訊</header>
+    <div class="container">
+        <a href="/">&#x2190; 返回訂票首頁</a>
+        <h2>訂票紀錄</h2>
+        <div style="overflow-x:auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>id</th>
+                    <th>訂票結果</th>
+                    <th>訂位代號</th>
+                    <th>訂票時間</th>
+                    <th>姓名</th>
+                    <th>車次</th>
+                    <th>乘車日期</th>
+                    <th>出發時間地點</th>
+                    <th>到達時間地點</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for h in history %}
+                <tr>
+                    <td>{{ h.id }}</td>
+                    <td>{{ h.result }}</td>
+                    <td>{{ h.code if h.code != 'N/A' else '—' }}</td>
+                    <td>{{ h.formatted_order_date }}</td>
+                    <td>{{ h.name }}</td>
+                    <td>{{ h.train_no }}</td>
+                    <td>{{ h.formatted_travel_date }}</td>
+                    <td>{{ h.from_info }}</td>
+                    <td>{{ h.to_info }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="9">目前沒有歷史訂票紀錄。</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+</body>
+</html>
