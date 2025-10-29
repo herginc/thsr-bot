@@ -212,7 +212,7 @@ def thsr_load_booking_page(session: Session):
     return page
 
 def session_init():
-    max_retries = 3
+    max_retries = 3    # 15s timeout for each retry
 
     session = requests.Session()
     session.mount("https://", HTTPAdapter(max_retries=max_retries))
@@ -229,14 +229,14 @@ def session_init():
         # PROXY = "http://182.52.165.147:8080"  # 3780 ms (Thailand)
 
         # 使用 HTTP proxy (port 80) 做為 HTTP/HTTPS 代理
-        PROXY = "http://182.52.165.147:8080"
+        PROXY = PROXY_SERVER
         session.proxies.update({
             "http": PROXY,
             "https": PROXY,
         })
         # 避免 requests 使用環境變數中的代理設定（視需求可保留或移除）
         session.trust_env = False
-        logger.info("*** proxy server enbled ***")
+        logger.info(f"{YELLOW}*** proxy server {PROXY_SERVER} enbled ***{RESET}")
 
     return session
 

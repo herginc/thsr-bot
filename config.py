@@ -1,3 +1,5 @@
+import os
+
 BASE_URL = "https://irs.thsrc.com.tw"
 BOOKING_PAGE_URL = "https://irs.thsrc.com.tw/IMINT/?locale=tw"
 SUBMIT_FORM_URL = "https://irs.thsrc.com.tw/IMINT/;jsessionid={}?wicket:interface=:0:BookingS1Form::IFormSubmitListener"
@@ -5,11 +7,11 @@ CONFIRM_TRAIN_URL = "https://irs.thsrc.com.tw/IMINT/?wicket:interface=:1:Booking
 CONFIRM_TICKET_URL = "https://irs.thsrc.com.tw/IMINT/?wicket:interface=:2:BookingS3Form::IFormSubmitListener"
 
 # Booking Form Captcha Information
-# XPath: 
+# XPath:
 #   //*[@id="BookingS1Form_homeCaptcha_passCode"]
 # HTML element:
-#   <img id="BookingS1Form_homeCaptcha_passCode" class="captcha-img" 
-#   src="/IMINT/?wicket:interface=:2:BookingS1Form:homeCaptcha:passCode::IResourceListener&amp;wicket:antiCache=1761288618573" 
+#   <img id="BookingS1Form_homeCaptcha_passCode" class="captcha-img"
+#   src="/IMINT/?wicket:interface=:2:BookingS1Form:homeCaptcha:passCode::IResourceListener&amp;wicket:antiCache=1761288618573"
 #   height="54px">
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 Edge/12.246"
@@ -35,9 +37,6 @@ AJAX_FULL_URL = BASE_URL + AJAX_RELATIVE_URL
 # THSR Booking URL
 THSR_BOOKING_HOST = "irs.thsrc.com.tw"
 
-# configure proxy server
-PROXY_ENABLE = 1
-
 # define http header
 http_headers: dict = {
     "Host": THSR_BOOKING_HOST,
@@ -61,6 +60,36 @@ ajax_http_headers: dict = {
 
 #    'X-Requested-With': 'XMLHttpRequest',
 
+# ----------------------------------------------------------------------------
+# Proxy Server Configuration
+# ----------------------------------------------------------------------------
+
+# Enable or disable proxy server
+PROXY_ENABLE = 1
+
+# PROXY = "http://60.249.94.59:3128"
+# PROXY = "http://202.29.215.78:8080"   # 101056 ms
+# PROXY = "http://165.154.110.152:1080" # 785 ms (HongKong)   (GOOD)
+# PROXY = "http://165.154.152.162:1080" # 1634 ms (HongKong)  (GOOD)
+# PROXY = "http://182.52.165.147:8080"  # 3780 ms (Thailand)
+
+# 使用 HTTP proxy (port 80) 做為 HTTP/HTTPS 代理
+PROXY_SERVER = "http://182.52.165.147:8080"
+
+# Override proxy settings from environment if provided
+_env_proxy_enable = os.getenv("PROXY_ENABLE")
+if _env_proxy_enable is not None:
+    try:
+        PROXY_ENABLE = int(_env_proxy_enable)
+    except ValueError:
+        PROXY_ENABLE = 1 if _env_proxy_enable.lower() in ("1", "true", "yes", "on") else 0
+
+_env_proxy_server = os.getenv("PROXY_SERVER")
+if _env_proxy_server:
+    PROXY_SERVER = _env_proxy_server
+
+print(f"PROXY_ENABLE = {PROXY_ENABLE}")
+print(f"PROXY_SERVER = {PROXY_SERVER}")
 
 # ----------------------------------------------------------------------------
 # Advanced Configuration
