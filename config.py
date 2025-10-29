@@ -77,14 +77,16 @@ PROXY_ENABLE = 1
 PROXY_SERVER = "http://182.52.165.147:8080"
 
 # Override proxy settings from environment if provided
-_env_proxy_enable = os.getenv("PROXY_ENABLE")
+# _env_proxy_enable = os.getenv("PROXY_ENABLE")
+_env_proxy_enable = os.environ.get("PROXY_ENABLE")
 if _env_proxy_enable is not None:
     try:
         PROXY_ENABLE = int(_env_proxy_enable)
     except ValueError:
         PROXY_ENABLE = 1 if _env_proxy_enable.lower() in ("1", "true", "yes", "on") else 0
 
-_env_proxy_server = os.getenv("PROXY_SERVER")
+# _env_proxy_server = os.getenv("PROXY_SERVER")
+_env_proxy_server = os.environ.get("PROXY_SERVER")
 if _env_proxy_server:
     PROXY_SERVER = _env_proxy_server
 
