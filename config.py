@@ -65,7 +65,7 @@ ajax_http_headers: dict = {
 # ----------------------------------------------------------------------------
 
 # Enable or disable proxy server
-PROXY_ENABLE = 1
+PROXY_ENABLE = 0
 
 # PROXY = "http://60.249.94.59:3128"
 # PROXY = "http://202.29.215.78:8080"   # 101056 ms
