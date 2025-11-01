@@ -1,5 +1,9 @@
 import os
 
+# ----------------------------------------------------------------------------
+# Define URLs
+# ----------------------------------------------------------------------------
+
 BASE_URL = "https://irs.thsrc.com.tw"
 BOOKING_PAGE_URL = "https://irs.thsrc.com.tw/IMINT/?locale=tw"
 SUBMIT_FORM_URL = "https://irs.thsrc.com.tw/IMINT/;jsessionid={}?wicket:interface=:0:BookingS1Form::IFormSubmitListener"
@@ -37,7 +41,10 @@ AJAX_FULL_URL = BASE_URL + AJAX_RELATIVE_URL
 # THSR Booking URL
 THSR_BOOKING_HOST = "irs.thsrc.com.tw"
 
-# define http header
+# ----------------------------------------------------------------------------
+# Define HTTP Header
+# ----------------------------------------------------------------------------
+
 http_headers: dict = {
     "Host": THSR_BOOKING_HOST,
     "User-Agent": USER_AGENT,
@@ -48,7 +55,6 @@ http_headers: dict = {
 
 AJAX_ACCEPT_STR = "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
 
-# define http header
 ajax_http_headers: dict = {
     "Host": THSR_BOOKING_HOST,
     "User-Agent": USER_AGENT,
@@ -59,6 +65,7 @@ ajax_http_headers: dict = {
 }
 
 #    'X-Requested-With': 'XMLHttpRequest',
+
 
 # ----------------------------------------------------------------------------
 # Proxy Server Configuration
@@ -93,6 +100,7 @@ if _env_proxy_server:
 print(f"PROXY_ENABLE = {PROXY_ENABLE}")
 print(f"PROXY_SERVER = {PROXY_SERVER}")
 
+
 # ----------------------------------------------------------------------------
 # Advanced Configuration
 # ----------------------------------------------------------------------------
@@ -105,12 +113,24 @@ SAVE_BOOKING_PAGE = 0
 # ----------------------------------------------------------------------------
 
 # Define ANSI escape codes for colors and reset
-# RED = '\033[91m'
-# GREEN = '\033[92m'
-# YELLOW = '\033[93m'
-# RESET = '\033[0m' # Resets color and styling
 
-RED = '\x1b[91m'
-GREEN = '\x1b[92m'
-YELLOW = '\x1b[93m'
-RESET = '\x1b[0m' # Resets color and styling
+RED     = '\x1b[91m'
+GREEN   = '\x1b[92m'
+YELLOW  = '\x1b[93m'
+BLUE    = '\x1b[94m'
+MAGENTA = '\x1b[95m'
+CYAN    = '\x1b[96m'
+WHITE   = '\x1b[97m'
+RESET   = '\x1b[0m'     # Resets color and styling
+
+if os.name == 'nt':
+    import colorama
+    colorama.init()
+
+print(RED       + "Hello, color text ..." + RESET)
+print(GREEN     + "Hello, color text ..." + RESET)
+print(YELLOW    + "Hello, color text ..." + RESET)
+print(BLUE      + "Hello, color text ..." + RESET)
+print(MAGENTA   + "Hello, color text ..." + RESET)
+print(CYAN      + "Hello, color text ..." + RESET)
+print(WHITE     + "Hello, color text ..." + RESET)

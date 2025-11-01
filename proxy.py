@@ -17,8 +17,8 @@ import ddddocr
 import random
 
 # Initialize ddddocr
-# ocr = ddddocr.DdddOcr(show_ad=False)
-ocr = ddddocr.DdddOcr()
+ocr = ddddocr.DdddOcr(show_ad=False)
+# ocr = ddddocr.DdddOcr()
 
 def sleep_range(a, b):
     sec = random.uniform(a, b)
@@ -66,7 +66,7 @@ def click_regenerate_captcha_button(session: Session) -> bool:
 
 def get_captcha_value(image_bytes):
     captcha_value = ocr.classification(image_bytes)
-    print(RED + f"Get captcha value '{captcha_value}'" + RESET)
+    print(YELLOW + f"Get captcha value '{captcha_value}'" + RESET)
 
 def save_captcha_image(session: Session, img_src: str, file_path: str = "captcha_downloaded.png") -> bool:
     """
@@ -181,7 +181,7 @@ def thsr_load_booking_page(session: Session):
         # Check if the request was successful
         if response.status_code == 200:
             page = response.content
-            logger.info(f"{YELLOW}Get booking page from {BOOKING_PAGE_URL}{RESET}")
+            logger.info(f"{CYAN}Get booking page from {BOOKING_PAGE_URL}{RESET}")
             if (SAVE_BOOKING_PAGE):
                 filename = "output_10.html"
                 with open(filename, "w", encoding="utf-8") as file:
@@ -332,14 +332,9 @@ def main():
     # FORMAT = '[%(asctime)s][%(filename)s][%(levelname)s]: %(message)s'
     FORMAT = '[%(asctime)s][%(levelname)s][%(funcName)s]: %(message)s'
     # Logging初始設定 + 上定義輸出格式
-    logging.basicConfig(level=logging.DEBUG, format=FORMAT)
+    logging.basicConfig(level=logging.INFO, format=FORMAT)
 
     logger.info('Started')
-
-    print(RED + "This text is red." + RESET)
-    print(GREEN + "This text is green." + RESET)
-    print(YELLOW + "This text is yellow." + RESET)
-    print(RED + "Bold red text" + RESET) # Example with bold (bold code is 1;91m for red)
 
     thsr_run_booking_flow()
 
