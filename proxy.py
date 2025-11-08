@@ -17,15 +17,53 @@ import ddddocr
 import random
 import re
 
+
+
+
+booking_OK = 0
+booking_NG = 0
+
+
 # Initialize ddddocr
 ocr = ddddocr.DdddOcr(show_ad=False)
 # ocr = ddddocr.DdddOcr()
+
+# ----------------------------------------------------------------------------
+# Common Functions
+# ----------------------------------------------------------------------------
 
 def sleep_range(a, b):
     sec = random.uniform(a, b)
     sleep(sec)
 
-# ----------------- 模擬點擊按鈕的程式碼 -----------------
+
+# ----------------------------------------------------------------------------
+# Session Initialization
+# ----------------------------------------------------------------------------
+
+def session_init():
+
+    session = requests.Session()
+    session.mount("https://", HTTPAdapter(max_retries=session_max_retries))
+    session.mount("http://", HTTPAdapter(max_retries=session_max_retries))
+
+    if (PROXY_ENABLE):
+        # Configure proxy settings
+        PROXY = PROXY_SERVER
+        session.proxies.update({
+            "http": PROXY,
+            "https": PROXY,
+        })
+        # 避免 requests 使用環境變數中的代理設定（視需求可保留或移除）
+        session.trust_env = False
+        logger.info(f"{YELLOW}*** proxy server {PROXY_SERVER} enbled ***{RESET}")
+
+    return session
+
+
+# ----------------------------------------------------------------------------
+# Reload captcha image (模擬 click 'regenerate' button)
+# ----------------------------------------------------------------------------
 
 def reload_captcha_image(session: Session, url_path: str) -> bool:
     """
@@ -38,18 +76,15 @@ def reload_captcha_image(session: Session, url_path: str) -> bool:
         如果請求成功則返回 True，否則返回 False。
     """
 
-    # captcha_recode_link = AJAX_FULL_URL
     captcha_recode_link = BASE_URL + url_path
 
-    logger.debug(f"正在模擬點擊 (Ajax GET): {captcha_recode_link}")
+    logger.debug(f"模擬 click 'regenerate' button (Ajax GET): {captcha_recode_link}")
 
     try:
-        # 發送 GET 請求到 Ajax URL
-        # Wicket Ajax 請求通常是一個 GET 請求
+        # 發送 GET 請求到 Ajax URL, Wicket Ajax 請求通常是一個 GET 請求
         response = session.get(
             captcha_recode_link,
-            headers=http_headers,
-            # headers=ajax_http_headers,
+            headers=http_headers,  # ajax_http_headers,
             timeout=15
         )
 
@@ -62,6 +97,11 @@ def reload_captcha_image(session: Session, url_path: str) -> bool:
         # cookies = response.json().get('cookies')
         # logger.info(CYAN + f"cookies = {cookies}" + RESET)
 
+        # scott --> how to parse this response (XML format ??)
+
+        # <?xml version="1.0" encoding="UTF-8"?><ajax-response><component id="BookingS1Form_homeCaptcha_passCode" ><![CDATA[<img id="BookingS1Form_homeCaptcha_passCode" class="captcha-img" src="/IMINT/?wicket:interface=:0:BookingS1Form:homeCaptcha:passCode::IResourceListener&wicket:antiCache=1762263528372" height="54px">]]></component><component id="BookingS1Form_homeCaptcha_soundLink" ><![CDATA[<button id="BookingS1Form_homeCaptcha_soundLink" type="button" class="btn-speak" onclick="window.location.href='/IMINT/?wicket:interface=:0:BookingS1Form:homeCaptcha:soundLink::ILinkListener';">
+        # <span title="語音播放" class="material-icons" wicket:message="title=bookingS3PlayAudio">volume_up</span>
+        # </button>]]></component></ajax-response>
 
         # Wicket 的響應內容 (response.text) 包含了指示瀏覽器更新 DOM 的 XML
         # 如果需要，您可以解析這個 XML 檢查驗證碼圖片的 src 是否有更新
@@ -75,7 +115,8 @@ def reload_captcha_image(session: Session, url_path: str) -> bool:
 
 
 def get_captcha_value(image_bytes):
-    captcha_value = ocr.classification(image_bytes)
+    # captcha_value = ocr.classification(image_bytes) # run this API about 0.5s
+    captcha_value = '1234'
     print(YELLOW + f"Get captcha value '{captcha_value}'" + RESET)
     return captcha_value
 
@@ -91,14 +132,14 @@ def save_captcha_image(session: Session, img_src: str, file_path: str = "captcha
         如果下載成功則返回 True，否則返回 False。
     """
 
-    # 使用 global 變數 BASE_URL 與相對路徑組合，形成完整的 URL
-    img_full_url = BASE_URL + img_src
-
     if not img_src:
         print("錯誤: 圖片相對路徑 (img_src) 不可為空。")
         return False
 
-    logger.info(f"Try to get image from: {img_full_url}")
+    # 使用 global 變數 BASE_URL 與相對路徑組合，形成完整的 URL
+    img_full_url = BASE_URL + img_src
+
+    logger.info(CYAN + f"Try to get image from: {img_full_url}" + RESET)
 
     captcha_value = None
 
@@ -184,6 +225,8 @@ def parse_booking_form_element_id(session: Session, page: str):
         return None
 
 
+    """""
+
     # 正則表達式模式
     # 模式解釋:
     # 1. 'jsessionid=' : 匹配起始標記
@@ -203,7 +246,8 @@ def parse_booking_form_element_id(session: Session, page: str):
         print(MAGENTA + f"✅ 成功提取的子字串：{extracted_substring}" + RESET)
     else:
         print("❌ 找不到匹配的子字串。")
-
+    
+    """""
 
     # configure target id
     target_id = BOOKING_FORM_CAPTCHA_RELOAD_BTN_ID
@@ -255,17 +299,17 @@ def parse_booking_form_element_id(session: Session, page: str):
 
     print(RESET)
 
-    booking_form['captcha_image_url']  = inject_jsessionid_to_url(session, booking_form['captcha_image_url'])
-    booking_form['captcha_reload_url'] = inject_jsessionid_to_url(session, booking_form['captcha_reload_url'])
-    booking_form['booking_submit_url'] = inject_jsessionid_to_url(session, booking_form['booking_submit_url'])
+    # booking_form['captcha_image_url']  = inject_jsessionid_to_url(session, booking_form['captcha_image_url'])
+    # booking_form['captcha_reload_url'] = inject_jsessionid_to_url(session, booking_form['captcha_reload_url'])
+    # booking_form['booking_submit_url'] = inject_jsessionid_to_url(session, booking_form['booking_submit_url'])
 
-    print(CYAN)
+    # print(CYAN)
 
-    print(f"captcha_image_url  = {booking_form['captcha_image_url']}")
-    print(f"captcha_reload_url = {booking_form['captcha_reload_url']}")
-    print(f"booking_submit_url = {booking_form['booking_submit_url']}")
+    # print(f"captcha_image_url  = {booking_form['captcha_image_url']}")
+    # print(f"captcha_reload_url = {booking_form['captcha_reload_url']}")
+    # print(f"booking_submit_url = {booking_form['booking_submit_url']}")
 
-    print(RESET)
+    # print(RESET)
 
 
     return booking_form
@@ -385,6 +429,10 @@ def inject_jsessionid_to_url_XXX(session: Session, url_path: str) -> Optional[st
         return None
 
 
+# ----------------------------------------------------------------------------
+# 
+# ----------------------------------------------------------------------------
+
 def inject_jsessionid_to_url(session: Session, url_path: str) -> Optional[str]:
     """
     檢查 URL 路徑是否包含 ';jsessionid='。
@@ -453,7 +501,8 @@ def check_and_print_errors(html_content: Union[str, bytes]) -> bool:
     Returns:
         bool: 如果找到錯誤元素則返回 True，否則返回 False。
     """
-    
+    global booking_OK, booking_NG
+
     # 確保傳入的是字串，BeautifulSoup 建議使用字串解析
     if isinstance(html_content, bytes):
         # 假設內容是 UTF-8 編碼，如果不是，請替換為正確的編碼
@@ -468,6 +517,7 @@ def check_and_print_errors(html_content: Union[str, bytes]) -> bool:
     error_elements = soup.find_all(class_='feedbackPanelERROR')
     
     if error_elements:
+        booking_NG = booking_NG + 1
         print(f"\n{RED}{BOLD}======= 🚨 提交錯誤訊息：======= {RESET}")
         
         # 為了避免重複印出 (因為 <ul> 和 <span> 都帶有這個 class)，
@@ -492,11 +542,62 @@ def check_and_print_errors(html_content: Union[str, bytes]) -> bool:
         print(f"{RED}{BOLD}==================================={RESET}\n")
         return True
     else:
-        # print("✅ HTML 內容中未發現 'feedbackPanelERROR'，可能已成功進入下一步。")
+        booking_OK = booking_OK + 1
+        print(YELLOW + "✅ HTML 內容中未發現 'feedbackPanelERROR'，可能已成功進入下一步。" + RESET)
         return False
 
+def get_booking_data(passcode: str):
 
-def thsr_submit_booking_form(session: Session, url_path: str, passcode: str) -> bytes:
+    booking_data = {}
+    booking_data['types_of_trip'] = 0
+    booking_data['class_type'] = 0
+    booking_data['seat_prefer'] = 0
+    booking_data['search_by'] = 'radio31'           # 最好不要hard-code
+    booking_data['start_station'] = 2
+    booking_data['dest_station'] = 3
+    booking_data['outbound_date'] = '2025/11/14'
+    booking_data['inbound_date'] = '2025/11/14'
+    booking_data['outbound_time'] = '1201A'         # 最好不要hard-code
+    booking_data['outbound_train_id'] = ""
+    booking_data['inbound_time'] = ''
+    booking_data['inbound_train_id'] = ""
+    booking_data['adult_ticket_num'] = '1F'
+    booking_data['child_ticket_num'] = '0H'
+    booking_data['disabled_ticket_num'] = '0W'
+    booking_data['elder_ticket_num'] = '0E'
+    booking_data['college_ticket_num'] = '0P'
+    booking_data['type_num'] = f"{booking_data['adult_ticket_num']},{booking_data['child_ticket_num']},{booking_data['disabled_ticket_num']},{booking_data['elder_ticket_num']},{booking_data['college_ticket_num']}"
+
+    form_data = {
+        "BookingS1Form:hf:0": "",
+        "tripCon:typesoftrip": booking_data['types_of_trip'],
+        "trainCon:trainRadioGroup": booking_data['class_type'],
+        "seatCon:seatRadioGroup": booking_data['seat_prefer'],
+        "bookingMethod": booking_data['search_by'],
+        "selectStartStation": booking_data['start_station'],
+        "selectDestinationStation": booking_data['dest_station'],
+        "toTimeInputField": booking_data['outbound_date'],
+        "backTimeInputField": booking_data['inbound_date'],
+        "toTimeTable": booking_data['outbound_time'],
+        "toTrainIDInputField": booking_data['outbound_train_id'],
+        "backTimeTable": booking_data['inbound_time'],
+        "backTrainIDInputField": booking_data['inbound_train_id'],
+        "ticketPanel:rows:0:ticketAmount": booking_data['adult_ticket_num'],
+        "ticketPanel:rows:1:ticketAmount": booking_data['child_ticket_num'],
+        "ticketPanel:rows:2:ticketAmount": booking_data['disabled_ticket_num'],
+        "ticketPanel:rows:3:ticketAmount": booking_data['elder_ticket_num'],
+        "ticketPanel:rows:4:ticketAmount": booking_data['college_ticket_num'],
+        "ticketTypeNum": booking_data['type_num'],
+        "homeCaptcha:securityCode": passcode,
+    }
+
+    return form_data
+
+# ----------------------------------------------------------------------------
+# Submit Booking Form
+# ----------------------------------------------------------------------------
+
+def thsr_submit_booking_form(session: Session, page: str, url_path: str, passcode: str) -> str:
     page = None
 
     submit_url = BASE_URL + url_path
@@ -530,49 +631,7 @@ def thsr_submit_booking_form(session: Session, url_path: str, passcode: str) -> 
         "Accept-Encoding": ACCEPT_ENCODING
     }
 
-
-    types_of_trip = 0
-    class_type = 0
-    seat_prefer = 0
-    search_by = 'radio31'
-    start_station = 2
-    dest_station = 3
-    outbound_date = '2025/11/04'
-    inbound_date = '2025/11/04'
-    outbound_time = '1201A'
-    outbound_train_id = ""
-    inbound_time = ''
-    inbound_train_id = ""
-    adult_ticket_num = '1F'
-    child_ticket_num = '0H'
-    disabled_ticket_num = '0W'
-    elder_ticket_num = '0E'
-    college_ticket_num = '0P'
-    type_num = f"{adult_ticket_num},{child_ticket_num},{disabled_ticket_num},{elder_ticket_num},{college_ticket_num}"
-
-
-    form_data = {
-        "BookingS1Form:hf:0": "",
-        "tripCon:typesoftrip": types_of_trip,
-        "trainCon:trainRadioGroup": class_type,
-        "seatCon:seatRadioGroup": seat_prefer,
-        "bookingMethod": search_by,
-        "selectStartStation": start_station,
-        "selectDestinationStation": dest_station,
-        "toTimeInputField": outbound_date,
-        "backTimeInputField": inbound_date,
-        "toTimeTable": outbound_time,
-        "toTrainIDInputField": outbound_train_id,
-        "backTimeTable": inbound_time,
-        "backTrainIDInputField": inbound_train_id,
-        "ticketPanel:rows:0:ticketAmount": adult_ticket_num,
-        "ticketPanel:rows:1:ticketAmount": child_ticket_num,
-        "ticketPanel:rows:2:ticketAmount": disabled_ticket_num,
-        "ticketPanel:rows:3:ticketAmount": elder_ticket_num,
-        "ticketPanel:rows:4:ticketAmount": college_ticket_num,
-        "ticketTypeNum": type_num,
-        "homeCaptcha:securityCode": passcode,
-    }
+    form_data = get_booking_data(passcode)
 
     try:
         # Measure time just for the request (ms, integer)
@@ -582,12 +641,8 @@ def thsr_submit_booking_form(session: Session, url_path: str, passcode: str) -> 
 
         # Check if the request was successful
         if response.status_code == 200:
-            page = response.content   # response.text
+            page = response.text  # response.content   # response.text
             logger.info(CYAN + f"Get booking response from {submit_url}" + RESET)
-
-            # cookies = response.json().get('cookies')
-            # logger.info(CYAN + f"cookies = {cookies}" + RESET)
-
 
             if (SAVE_BOOKING_PAGE):
                 filename = "booking_response.html"
@@ -612,7 +667,352 @@ def thsr_submit_booking_form(session: Session, url_path: str, passcode: str) -> 
     return page
 
 
-def thsr_load_booking_page(session: Session) -> bytes:
+# ----------------------------------------------------------------------------
+# Select Target Train id (by time or train id)
+# ----------------------------------------------------------------------------
+
+# 設定全域變數：時間比對的容許範圍（分鐘）
+# 允許範圍：-5 分鐘到 +5 分鐘
+TIME_TOLERANCE_MINUTES = 5
+
+def select_train_and_submit(page: str, search_by: str, target_list: list) -> str:
+    """
+    根據時間（含前後容許範圍）或車次列表自動選擇台灣高鐵訂票頁面上的車次，並模擬點擊「確認車次」按鈕。
+
+    Args:
+        page: HTML 檔案內容 (字串)。
+        search_by: 查詢方式，'時間' 或 '車次'。
+        target_list: 優先的時間列表 (格式: 'HH:MM') 或車次號碼列表 (格式: 'XXX' 或 'XXXX')。
+
+    Returns:
+        成功選擇與準備提交，返回 'Train selected and form submitted successfully.'。
+        找不到符合條件的車次，返回 'No matching train found.'。
+        參數錯誤，返回 'Invalid search_by parameter. Must be "時間" or "車次".'。
+    """
+    global TIME_TOLERANCE_MINUTES
+
+    if search_by not in ['時間', '車次']:
+        return 'Invalid search_by parameter. Must be "時間" or "車次".'
+
+    soup = BeautifulSoup(page, 'html.parser')
+    
+    # 尋找所有車次選項
+    train_options = soup.select('div.result-listing label.result-item')
+
+    # 找到表單的 action URL
+    form = soup.find('form', {'id': 'BookingS2Form'})
+    if not form:
+        return 'Form "BookingS2Form" not found.'
+    
+    form_action = form.get('action')
+    if not form_action:
+        return 'Form action URL not found.'
+
+    # 2. 取得隱藏欄位 'BookingS2Form:hf:0' 的值 (這是 Wicket 框架通常需要的)
+    hf_input = form.find('input', {'name': 'BookingS2Form:hf:0'})
+    hf_value = hf_input.get('value') if hf_input else ''
+
+    # 儲存最終選擇的車次 input 標籤
+    selected_train_input = None
+
+    if search_by == '車次':
+        # 按照 target_list 中的車次號碼優先級選擇
+        for target_code in target_list:
+            for train_label in train_options:
+                train_input = train_label.find('input', {'name': 'TrainQueryDataViewPanel:TrainGroup'})
+                
+                # 取得車次號碼
+                query_code = train_input.get('querycode')
+                
+                if query_code == target_code:
+                    selected_train_input = train_input
+                    break
+            if selected_train_input:
+                break
+                
+    elif search_by == '時間':
+        
+        # 1. 將 target_list 中的時間轉換為分鐘數
+        target_minutes_list = []
+        for time_str in target_list:
+            try:
+                h, m = map(int, time_str.split(':'))
+                target_minutes_list.append(h * 60 + m)
+            except ValueError:
+                print(f"Warning: Invalid time format in target_list: {time_str}")
+        
+        if not target_minutes_list:
+             return 'No valid time format found in target_list.'
+             
+        train_candidates = []
+        
+        for train_label in train_options:
+            train_input = train_label.find('input', {'name': 'TrainQueryDataViewPanel:TrainGroup'})
+            
+            # 取得出發時間
+            query_departure = train_input.get('querydeparture')
+            if not query_departure:
+                continue
+
+            try:
+                dep_h, dep_m = map(int, query_departure.split(':'))
+                departure_minutes = dep_h * 60 + dep_m
+                
+                min_abs_diff = float('inf')
+                best_target_index = float('inf')
+                
+                # 遍歷所有目標時間，找到符合容許範圍且優先級最高的目標
+                for index, target_minutes in enumerate(target_minutes_list):
+                    # 計算實際出發時間與目標時間的差距
+                    diff = departure_minutes - target_minutes
+                    abs_diff = abs(diff)
+                    
+                    # 檢查是否在容許範圍內 (-5 到 +5 分鐘)
+                    if abs_diff <= TIME_TOLERANCE_MINUTES:
+                        
+                        # 如果這是目前找到的、優先級更高的目標時間
+                        if index < best_target_index:
+                            best_target_index = index
+                            min_abs_diff = abs_diff
+                            
+                        # 如果優先級相同，選擇差距更小的
+                        elif index == best_target_index and abs_diff < min_abs_diff:
+                            min_abs_diff = abs_diff
+                            
+                
+                if best_target_index != float('inf'):
+                    # 儲存車次 input、與目標時間的絕對差距、以及在 target_list 中的優先級
+                    train_candidates.append({
+                        'input': train_input, 
+                        'abs_diff': min_abs_diff, 
+                        'target_index': best_target_index,
+                        'departure_minutes': departure_minutes
+                    })
+            except ValueError:
+                # 忽略格式不正確的車次時間
+                continue
+
+        if train_candidates:
+            # 排序邏輯：
+            # 1. 優先級最高的 target_list (target_index 越小越好)
+            # 2. 絕對時間差距越小越好 (abs_diff 越小越好)
+            # 3. 如果前兩者相同，則選出發時間較早的 (departure_minutes 越小越好)
+            train_candidates.sort(key=lambda x: (x['target_index'], x['abs_diff'], x['departure_minutes']))
+            
+            selected_train_input = train_candidates[0]['input']
+            
+    
+    if selected_train_input:
+        # 1. 設定選中的車次 input 的 'checked' 屬性為 'true'，並移除其他選項的 'checked'
+        for train_label in train_options:
+            train_input = train_label.find('input', {'name': 'TrainQueryDataViewPanel:TrainGroup'})
+            if train_input == selected_train_input:
+                train_input['checked'] = 'true'
+            else:
+                if 'checked' in train_input.attrs:
+                    del train_input['checked']
+                    
+        # 2. 模擬點擊 '確認車次' 按鈕 (實際的網路請求需要您在外部處理)
+
+        # 4. 取得選中車次的 radio button 資訊
+        radio_name = selected_train_input.get('name')
+        radio_value = selected_train_input.get('value')
+
+        # selected_radio              = selected_train_input.get('value')
+        selected_code               = selected_train_input.get('querycode')
+        selected_querydeparturedate = selected_train_input.get('querydeparturedate')
+        selected_departure          = selected_train_input.get('querydeparture')
+        
+        print(f"Selected Train (Tolerance {TIME_TOLERANCE_MINUTES} min): Code={selected_code}, Departure_Date={selected_querydeparturedate}, Departure={selected_departure}")
+        print(f"Next step: Submit form to {form_action} with data including the selected train.")
+
+        # select_train_data = {
+        #     "BookingS2Form:hf:0": hf_value,
+        #     "TrainQueryDataViewPanel:TrainGroup": radio_value,
+        #     "SubmitButton": '確認車次'
+        # }
+
+        # 5. 構建完整的表單提交數據
+        form_data = {
+            'BookingS2Form:hf:0': hf_value,               # Wicket 隱藏欄位
+            radio_name: radio_value,                      # 選中的車次 radio button
+            'SubmitButton': '確認車次'                     # 提交按鈕
+        }
+
+        print(form_data)
+
+        # 返回成功訊息
+        # return 'Train selected and form submitted successfully.'
+
+        return {
+            'url': form_action,
+            'data': form_data,
+            'train_code': selected_code
+        }
+
+    else:
+        # 未找到符合條件的車次
+        return 'No matching train found.'
+
+
+def select_train_and_submit_XXX(page: str, search_by: str, target_list: list) -> str:
+    """
+    根據時間或車次列表自動選擇台灣高鐵訂票頁面上的車次，並嘗試點擊「確認車次」按鈕。
+
+    Args:
+        page: HTML 檔案內容 (字串)。
+        search_by: 查詢方式，'時間' (優先選擇出發時間最接近或等於 target_list 內時間的車次) 
+                   或 '車次' (優先選擇 target_list 內車次號碼的車次)。
+        target_list: 優先的時間列表 (格式: 'HH:MM') 或車次號碼列表 (格式: 'XXX' 或 'XXXX')。
+
+    Returns:
+        如果成功找到並選中車次，返回 'Train selected and form submitted successfully.'。
+        如果未找到符合條件的車次，返回 'No matching train found.'。
+        如果 'search_by' 參數不正確，返回 'Invalid search_by parameter. Must be "時間" or "車次".'。
+    """
+    if search_by not in ['時間', '車次']:
+        return 'Invalid search_by parameter. Must be "時間" or "車次".'
+
+    soup = BeautifulSoup(page, 'html.parser')
+    
+    # 尋找所有車次選項
+    train_options = soup.select('div.result-listing label.result-item')
+
+    # 找到表單的 action URL
+    form = soup.find('form', {'id': 'BookingS2Form'})
+    if not form:
+        return 'Form "BookingS2Form" not found.'
+    
+    form_action = form.get('action')
+    if not form_action:
+        return 'Form action URL not found.'
+
+    # 儲存最終選擇的車次 input 標籤
+    selected_train_input = None
+
+    if search_by == '車次':
+        # 按照 target_list 中的車次號碼優先級選擇
+        for target_code in target_list:
+            for train_label in train_options:
+                train_input = train_label.find('input', {'name': 'TrainQueryDataViewPanel:TrainGroup'})
+                
+                # 取得車次號碼
+                # query_code = train_input.get('QueryCode')
+                query_code = train_input.get('querycode')
+                
+                if query_code == target_code:
+                    selected_train_input = train_input
+                    break
+            if selected_train_input:
+                break
+                
+    elif search_by == '時間':
+        # 尋找最接近 target_list 中優先時間的出發時間
+        
+        # 將 target_list 中的時間轉換為分鐘數，方便比較
+        target_minutes_list = []
+        for time_str in target_list:
+            try:
+                h, m = map(int, time_str.split(':'))
+                target_minutes_list.append(h * 60 + m)
+            except ValueError:
+                print(f"Warning: Invalid time format in target_list: {time_str}")
+                
+        if not target_minutes_list:
+             return 'No valid time format found in target_list.'
+             
+        # 暫時儲存每個車次及其與目標時間的差距
+        train_candidates = []
+        
+        for train_label in train_options:
+            train_input = train_label.find('input', {'name': 'TrainQueryDataViewPanel:TrainGroup'})
+            
+            # 取得出發時間
+            query_departure = train_input.get('querydeparture')
+            if not query_departure:
+                continue
+
+            try:
+                dep_h, dep_m = map(int, query_departure.split(':'))
+                departure_minutes = dep_h * 60 + dep_m
+                
+                # 計算與每個目標時間的差距（越小越好，優先選擇目標時間在前的）
+                min_diff = float('inf')
+                best_target_index = float('inf')
+                
+                for index, target_minutes in enumerate(target_minutes_list):
+                    diff = departure_minutes - target_minutes
+                    
+                    if diff >= 0 and diff < min_diff:
+                        min_diff = diff
+                        best_target_index = index
+                        
+                    elif diff < 0 and departure_minutes > target_minutes:
+                        # 如果是前一天的時間 (例如 00:07 vs 23:59)，這裏暫時忽略跨日情況的複雜性，
+                        # 簡單的假設我們只選當天的，如果需要跨日邏輯會更複雜。
+                        pass
+
+                if min_diff != float('inf'):
+                    # 儲存車次 input、與目標時間的差距、以及在 target_list 中的優先級
+                    train_candidates.append({
+                        'input': train_input, 
+                        'diff': min_diff, 
+                        'target_index': best_target_index,
+                        'departure_minutes': departure_minutes
+                    })
+            except ValueError:
+                # 忽略格式不正確的車次時間
+                continue
+
+        if train_candidates:
+            # 排序邏輯：
+            # 1. 優先級最高的 target_list (target_index 越小越好)
+            # 2. 差距越小越好 (diff 越小越好)
+            # 3. 如果差距和目標優先級都一樣，則選出發時間較早的 (departure_minutes 越小越好)
+            train_candidates.sort(key=lambda x: (x['target_index'], x['diff'], x['departure_minutes']))
+            
+            selected_train_input = train_candidates[0]['input']
+            
+    
+    if selected_train_input:
+        # 1. 設定選中的車次 input 的 'checked' 屬性為 'true'，並移除其他選項的 'checked'
+        for train_label in train_options:
+            train_input = train_label.find('input', {'name': 'TrainQueryDataViewPanel:TrainGroup'})
+            if train_input == selected_train_input:
+                train_input['checked'] = 'true'
+            else:
+                if 'checked' in train_input.attrs:
+                    del train_input['checked']
+                    
+        # 2. 模擬點擊 '確認車次' 按鈕 (這個函式只是準備資料和提示下一步，實際的網路請求需要您在外部處理)
+        
+        # 取得選中車次的關鍵資訊來模擬表單提交
+        selected_code = selected_train_input.get('querycode')
+        selected_departure = selected_train_input.get('querydeparture')
+        
+        # 建立提交表單所需的資料 (簡化，實際可能需要更多 hidden 欄位)
+        form_data = {
+            'BookingS2Form:hf:0': '',
+            'SubmitButton': '確認車次'
+            # 實際提交時還需要選中的 radio button 的 value，這裡假設為 train_input.get('value')
+            # 這裡我們只模擬選擇，實際提交的 HTTP Request/Data 需要外部 library (如 requests) 處理
+        }
+        
+        print(f"Selected Train: Code={selected_code}, Departure={selected_departure}")
+        print(f"Next step: Submit form to {form_action} with data including the selected train.")
+        
+        # 返回成功訊息
+        return 'Train selected and form submitted successfully.'
+    else:
+        # 未找到符合條件的車次
+        return 'No matching train found.'
+
+
+# ----------------------------------------------------------------------------
+# Load Booking Main Page
+# ----------------------------------------------------------------------------
+
+def thsr_load_booking_page(session: Session) -> str:
 
     page = None
 
@@ -656,81 +1056,7 @@ def thsr_load_booking_page(session: Session) -> bytes:
 
     return page
 
-def session_init():
 
-    session = requests.Session()
-    session.mount("https://", HTTPAdapter(max_retries=session_max_retries))
-    session.mount("http://", HTTPAdapter(max_retries=session_max_retries))
-
-    if (PROXY_ENABLE):
-        # Configure proxy settings
-        PROXY = PROXY_SERVER
-        session.proxies.update({
-            "http": PROXY,
-            "https": PROXY,
-        })
-        # 避免 requests 使用環境變數中的代理設定（視需求可保留或移除）
-        session.trust_env = False
-        logger.info(f"{YELLOW}*** proxy server {PROXY_SERVER} enbled ***{RESET}")
-
-    return session
-
-
-# ----------------------------------------------------------------------------
-# Regenerate Captcha Function
-# ----------------------------------------------------------------------------
-
-def XXX_thsr_regenerate_captcha_flow(session: requests.Session, booking_page_html: bytes):
-    """
-    完整的重新產生並識別驗證碼流程。
-    1. 模擬點擊「重新產生」按鈕 (Ajax)。
-    2. 重新解析 HTML 以取得新的驗證碼圖片 src。
-    3. 下載並識別新的驗證碼圖片。
-    """
-    logger.info("--- 開始執行重新產生驗證碼流程 ---")
-
-    # 步驟 1: 模擬點擊「重新產生」按鈕
-    if not click_regenerate_captcha_button(session):
-        logger.error("重新產生驗證碼失敗，流程終止。")
-        return
-
-    # 步驟 2: 重新獲取並識別新的驗證碼
-
-    # 在 Wicket 機制中，模擬點擊 Ajax 按鈕後，
-    # 驗證碼圖片的 src 值會被更新，但 HTML 內容本身**不會**改變。
-    #
-    # 因此，我們只需要重新解析原始 HTML 來取得新的 src。
-    # (如果網站是傳統的 POST 請求刷新整個頁面，則需要重新 get 頁面)
-
-    # 這裡我們使用傳入的 booking_page_html (第一次加載的頁面內容)
-    # 進行解析以獲得最新的 src。
-
-    # 注意: 實際的 Wicket 流程中，圖片的 src 中的 `wicket:antiCache` 參數會被更新。
-    # 雖然 HTML 內容未變，但瀏覽器在執行 Wicket Ajax 響應的 JavaScript 後，
-    # 會被告知要重新載入 `id='BookingS1Form_homeCaptcha_passCode'` 元素的圖片。
-
-    # 雖然實際圖片 src 參數已被更新，但**第一次載入的 HTML 內容**中的 src 依然是舊的。
-    # 因此，我們需要**重新訪問頁面**或**直接構造圖片 URL**。
-
-    # 簡單起見，我們假設點擊後，頁面上的 **src 參數已更新** (或我們能構造出新的 src)。
-    # 在 Wicket 應用中，最保險的做法是**重新發送 GET 請求給整個頁面**，然後再解析。
-    # 但為了演示，我們直接重用 `get_captcha_src` 函式來獲取 **當前頁面上的 src**。
-
-    # --- 為了簡化，我們假設 Ajax 請求成功後，舊的 src 依然可用，但圖片內容已更新 ---
-    # 這是 Wicket 的特殊情況，我們重用第一次獲得的 src 結構，只是內容會變。
-    # 實際應用中，如果 src 變了，需要重新 parse HTML (即重新 load booking page)。
-
-    # 重新解析 HTML 取得 **舊的 src** (因為它包含相對路徑結構)
-    # 讓 `save_captcha_image` 函式去下載**最新的圖片內容**
-    captcha_passcode_url, captcha_reCode_url = get_captcha_src(booking_page_html.decode('utf-8'))
-
-    if captcha_passcode_url:
-        # 步驟 3: 下載並識別新的驗證碼圖片
-        # 由於 Ajax 成功，使用相同的 img_src 去下載，會取得新的圖片內容。
-        logger.info("取得新的驗證碼圖片並識別...")
-        save_captcha_image(session, captcha_passcode_url, file_path="new_captcha.png")
-    else:
-        logger.error("無法取得驗證碼圖片 src，流程終止。")
 
 
 # ----------------------------------------------------------------------------
@@ -748,9 +1074,12 @@ def thsr_run_booking_flow():
 
     run = True
 
-    if (run):
+    n = 0
 
-        sleep_range(1, 2)
+    # while (run):
+    if (1):
+
+        # sleep_range(1, 2)
 
         booking_form = parse_booking_form_element_id(session, page)
 
@@ -768,7 +1097,7 @@ def thsr_run_booking_flow():
         # captcha_reload_url      = BASE_URL + booking_form['captcha_reload_url']
         # booking_form_submit_url = BASE_URL + booking_form['booking_submit_url']         
 
-        sleep_range(1, 2)
+        sleep_range(0, 1)
 
         if (captcha_passcode_url):
             logger.info("--- Download Captcha Image ---")
@@ -776,34 +1105,104 @@ def thsr_run_booking_flow():
         else:
             pass  # TBD
 
-        sleep_range(1, 2)
-
         if (passcode):
             logger.info(YELLOW + f"passcode = {passcode}" + RESET)
-            page = thsr_submit_booking_form(session, booking_form_submit_url, passcode)
+            sleep_range(2, 3)
+            page = thsr_submit_booking_form(session, page, booking_form_submit_url, passcode)
         else:
             logger.info(YELLOW + "passcode is empty" + RESET)
 
-
         is_error_found = check_and_print_errors(page)
 
-        run = False
+        # if (is_error_found and captcha_passcode_url):
+        #     logger.info("<<< Download Captcha Image >>>")
+        #     passcode = save_captcha_image(session, captcha_passcode_url)            
+        # else:
+        #     pass  # TBD
 
-        return is_error_found
+        run = is_error_found
 
-        sleep_range(2, 3)
+        if (is_error_found == False):
+            if (SAVE_BOOKING_PAGE):
+                filename = "booking_2nd_page.html"
+                with open(filename, "w", encoding="utf-8") as file:
+                    # file.write(response.text)
+                    file.write(page)
+                logger.info(f"HTML content saved to {filename}")
+            
+            # translate booking data here
 
-        logger.info("--- Reload Captcha Image ---")
+            if (0):
+                print("--- Search by Train Code ---")
+                target_codes = ['9999', '1537', '803'] # 9999 不存在
+                result_code = select_train_and_submit(page, '車次', target_codes)
+                print(f"Result: {result_code}\n")
+            else:
+                print("--- Search by Time (Nearest after target) ---")
+                target_times = ['15:44', '13:46', '06:21']
+                submission_info = select_train_and_submit(page, '時間', target_times)
+                # submission_info = select_train_and_get_submission_data(page_content, '車次', target_list_code)
+                # print(f"Result: {result_time}\n")
 
-        if (captcha_reload_url):
-            # reload captcha image by clicking 'regenerate' button
-            if not reload_captcha_image(session, captcha_reload_url):
-                logger.error("Failed to reload captcha image")
-                return
-        else:
-            pass  # TBD
+            if 'error' in submission_info:
+                print(f"Submission failed: {submission_info['error']}")
+            else:
+                submission_url = submission_info['url']
+                submission_data = submission_info['data']
+                
+                print("\n--- Next Step: POST Request ---")
+                print(f"POST URL: {submission_url}")
+                print(f"POST Data: {submission_data}")
+                
+                # 實際的 POST 請求 (你需要執行這部分程式碼)
+                try:                    
+                    response = session.post(BASE_URL + submission_url, headers=http_headers, data=submission_data, allow_redirects=True, timeout=http_timeout)
+                    print("POST Request sent successfully.")
+                    # 處理下一頁的內容 post_response.text
+
+                    if (SAVE_BOOKING_PAGE):
+                        filename = "booking_3rd_page.html"
+                        with open(filename, "w", encoding="utf-8") as file:
+                            file.write(response.text)
+                            # file.write(page)
+                        logger.info(f"HTML content saved to {filename}")
+
+
+                except requests.exceptions.RequestException as e:
+                    print(f"An error occurred during POST request: {e}")
+                    print(submission_info)
+
+
+            return True
+
+
+
+
+        # run = False
+
+        # return is_error_found
 
         n = n + 1
+
+        if (n > 2):
+            run = False
+
+
+        # booking_form = parse_booking_form_element_id(session, page)
+
+        # sleep_range(2, 3)
+
+        # logger.info("--- Reload Captcha Image ---")
+
+        # if (captcha_reload_url):
+        #     # reload captcha image by clicking 'regenerate' button
+        #     if not reload_captcha_image(session, captcha_reload_url):
+        #         logger.error("Failed to reload captcha image")
+        #         return
+        # else:
+        #     pass  # TBD
+
+    return False
 
 
 
@@ -824,7 +1223,7 @@ def main():
 
     logger.info('Started')
 
-    max_run = 10
+    max_run = 5
 
     n = 0
 
@@ -832,14 +1231,18 @@ def main():
 
 
     while (n < max_run):
-        thsr_run_booking_flow()
+        v = thsr_run_booking_flow()
         n = n + 1
+        if (v == True):
+            break
 
     t1 = int(round((time.perf_counter() - t0) * 1000.0))  # ms, integer
     t2 = t1 / n
 
     print(f"all run time = {t1}ms")
     print(f"avg run time = {t2}ms")
+    print(f"booking_OK   = {booking_OK}")
+    print(f"booking_NG   = {booking_NG}")
 
     logger.info('Finished')
 

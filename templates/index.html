@@ -44,16 +44,30 @@
 <body>
     <header>高鐵訂票系統</header>
     <div class="container">
-        <h2>訂票表單</h2>
+        <h2>訂票表單 (簡式)</h2>
+        <!-- <h2>訂票表單(進階)</h2> -->
         <form id="booking-form"> 
-            <label>姓名<input name="name" required autocomplete="off"></label>
-            <label>身分證字號<input name="id_number" required autocomplete="off"></label>
-            <label>車次<input name="train_no" required autocomplete="off"></label>
-            <label>乘車日期<input name="travel_date" type="date" required></label>
+            <!-- <label>身分證字號<input name="id_number" required autocomplete="off"></label> -->
+            <!-- <label>出發時間<input name="from_time" type="time" required></label> -->
+            <!-- <label>到達時間<input name="to_time" type="time" required></label> -->
             <label>出發地點<input name="from_station" required autocomplete="off"></label>
-            <label>出發時間<input name="from_time" type="time" required></label>
             <label>到達地點<input name="to_station" required autocomplete="off"></label>
-            <label>到達時間<input name="to_time" type="time" required></label>
+            <label>乘車日期<input name="travel_date" type="date" required></label>
+            <label>車次或時間(hh:mm)<input name="search_data" required autocomplete="off"></label>
+            <!-- <label>姓名<input name="name" required autocomplete="off"></label> -->
+            <label>
+                姓名
+                <select name="name" required>
+                    {% if passengers|length == 0 %}
+                    <option value="" disabled selected>請先新增乘客個人資料</option>
+                    {% else %}
+                    <option value="" disabled selected>請選擇乘客</option>
+                    {% for p in passengers %}
+                    <option value="{{ p.name }}">{{ p.name }}</option>
+                    {% endfor %}
+                    {% endif %}
+                </select>
+            </label>
             <button type="submit">送出訂票</button>
         </form>
         <h3>目前訂票資訊 (自動更新)</h3>
@@ -63,25 +77,25 @@
                 <tr>
                     <th>id</th>
                     <th>訂票狀況</th>
-                    <th>訂票時間</th>
                     <th>姓名</th>
                     <th>車次</th>
                     <th>乘車日期</th>
-                    <th>出發時間地點</th>
-                    <th>到達時間地點</th>
+                    <th>出發地點</th>
+                    <th>到達地點</th>
+                    <th>詳細資訊</th>
                 </tr>
             </thead>
             <tbody id="pending-tasks-body">
-                {% for r in requests %}
+                {% for br in booking_requests %}
                 <tr>
-                    <td>{{ r.id }}</td>
-                    <td>{{ r.status }}</td>
-                    <td>{{ r.formatted_order_date }}</td>
-                    <td>{{ r.name }}</td>
-                    <td>{{ r.train_no }}</td>
-                    <td>{{ r.formatted_travel_date }}</td>
-                    <td>{{ r.from_info }}</td>
-                    <td>{{ r.to_info }}</td>
+                    <td>{{ br.id }}</td>
+                    <td>{{ br.status }}</td>
+                    <td>{{ br.name }}</td>
+                    <td>{{ br.train_id }}</td>
+                    <td>{{ br.formatted_travel_date }}</td>
+                    <td>{{ br.from_info }}</td>
+                    <td>{{ br.to_info }}</td>
+                    <td><a class="detail_info" href="/detail_info/?id={{ br.id }}"></a>link_to_get_detail_info</td>
                 </tr>
                 {% else %}
                 <tr>
@@ -122,7 +136,7 @@
         setInterval(fetchAndUpdateStatus, POLLING_INTERVAL_MS);
 
 
-        // --- JSON 提交處理腳本 (保持不變) ---
+        // --- JSON 提交處理腳本 ---
         const form = document.getElementById('booking-form');
         const API_SUBMIT_URL = '/api/submit_ticket'; 
 
@@ -135,23 +149,40 @@
                 data[key] = value;
             });
 
+            // *** 新增檢查：如果下拉選單顯示 '請先新增乘客個人資料'，則阻止提交 ***
+            const name_select = form.querySelector('select[name="name"]');
+            if (name_select && name_select.value === "") {
+                const selected_option = name_select.options[name_select.selectedIndex];
+                if (selected_option.text === "請先新增乘客個人資料") {
+                    alert("請先前往 '乘客個人資料' 頁面新增乘客資料。");
+                    return; 
+                }
+            }
+            // *** 檢查結束 ***
+
             fetch(API_SUBMIT_URL, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json', 
                 },
+                // body 提交的 JSON 中，name 僅為姓名，personal_id 不包含在內
                 body: JSON.stringify(data) 
             })
             .then(response => response.json())
             .then(result => {
                 if (result.status === 'success') {
-                    alert(`訂票任務已成功提交！任務 ID: ${result.task_id}`);
-                    form.reset(); 
+                    // alert(`訂票任務已成功提交！任務 ID: ${result.task_id}`);
+                    // form.reset(); // 不重置，保留使用者選取的站點等資訊
+                    // 僅重置下拉選單到預設狀態
+                    const name_select = form.querySelector('select[name="name"]');
+                    if (name_select) {
+                        name_select.selectedIndex = 0; 
+                    }
+                    
                     fetchAndUpdateStatus(); 
                 } else {
                     alert('提交失敗: ' + result.message);
-                }
-            })
+                }            })
             .catch(error => {
                 console.error('提交錯誤:', error);
                 alert('網路連線或伺服器發生錯誤。');

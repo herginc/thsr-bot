@@ -147,8 +147,9 @@ _env_proxy_server = os.environ.get("PROXY_SERVER")
 if _env_proxy_server:
     PROXY_SERVER = _env_proxy_server
 
-print(f"PROXY_ENABLE = {PROXY_ENABLE}")
-print(f"PROXY_SERVER = {PROXY_SERVER}")
+if (PROXY_ENABLE):
+    print(f"PROXY_ENABLE = {PROXY_ENABLE}")
+    print(f"PROXY_SERVER = {PROXY_SERVER}")
 
 
 # ----------------------------------------------------------------------------

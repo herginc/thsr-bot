@@ -2,6 +2,8 @@
 # app.py (Flask Web Server) - 已更新表格數據格式
 # =======================================================
 
+
+# Must for Render environment
 import gevent.monkey
 gevent.monkey.patch_all()
 
@@ -12,11 +14,14 @@ import time
 import threading
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List
-from zoneinfo import ZoneInfo
+# from zoneinfo import ZoneInfo
 from argparse import ArgumentParser
 
 from werkzeug.middleware.proxy_fix import ProxyFix
 from flask import Flask, request, abort, render_template, jsonify, render_template_string
+
+import threading
+from typing import Optional # <--- 必須加上這一行
 
 import proxy
 
@@ -28,14 +33,22 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 # --- 核心配置與全局狀態 (保持不變) ---
 MAX_NETWORK_LATENCY = 5
 BASE_CLIENT_TIMEOUT = 600 + MAX_NETWORK_LATENCY
-CST_TIMEZONE = ZoneInfo('Asia/Taipei')
+# CST_TIMEZONE = ZoneInfo('Asia/Taipei')
 
 data_lock = threading.Lock()
-current_waiting_event: threading.Event | None = None
-current_response_data: Dict[str, Any] | None = None
+
+
+if sys.version_info >= (3, 10):
+    print("Python Version >= 3.10")
+    current_waiting_event: threading.Event | None = None
+    current_response_data: Dict[str, Any] | None = None
+else:
+    print("Python Version < 3.10")
+    current_waiting_event: Optional[threading.Event] = None
+    current_response_data: Optional[Dict[str, Any]] = None
 
 TICKET_DIR = "./"
-TICKET_REQUEST_FILE = os.path.join(TICKET_DIR, "ticket_requests.json")
+TICKET_REQUEST_FILE = os.path.join(TICKET_DIR, "ticket_booking_requests.json")
 TICKET_HISTORY_FILE = os.path.join(TICKET_DIR, "ticket_history.json")
 
 PASSENGER_DIR = "./json"
@@ -56,12 +69,23 @@ def save_json(filename, data):
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+# --- 新增：根據姓名查找身分證字號的輔助函數 ---
+def get_passenger_data_by_name(name: str) -> str:
+    """從乘客檔案中根據姓名查找身分證字號，若找不到則回傳空字串。"""
+    passengers = load_json(PASSENGER_FILE) # PASSENGER_FILE 儲存乘客資料
+    for p in passengers:
+        # 由於 personal_id 可能是 string，且 name 必須完全匹配
+        if p.get("name") == name:
+            return p
+    return ""
+# --- 輔助函數結束 ---
+
 def get_new_id():
-    requests = load_json(TICKET_REQUEST_FILE)
+    booking_requests = load_json(TICKET_REQUEST_FILE)
     history = load_json(TICKET_HISTORY_FILE)
     max_id = 0
-    if requests:
-        max_id = max(max_id, max(r.get("id", 0) for r in requests))
+    if booking_requests:
+        max_id = max(max_id, max(r.get("id", 0) for r in booking_requests))
     if history:
         max_id = max(max_id, max(h.get("id", 0) for h in history))
     return max_id + 1
@@ -72,33 +96,21 @@ def get_new_passenger_id():
         return 1
     return max(p["id"] for p in passengers) + 1
 
-# --- 時間同步函式 (保持不變) ---
-def calculate_server_timeout(client_timeout_s: int, client_timestamp_str: str) -> int:
-    try:
-        client_start_time_naive = datetime.fromisoformat(client_timestamp_str)
-        client_start_time_cst = client_start_time_naive.replace(tzinfo=CST_TIMEZONE)
-        client_start_time_utc = client_start_time_cst.astimezone(timezone.utc)
-        t2_end_time = client_start_time_utc + timedelta(seconds=client_timeout_s - MAX_NETWORK_LATENCY)
-        current_server_time = datetime.now(timezone.utc)
-        time_to_wait = (t2_end_time - current_server_time).total_seconds()
-        return max(0, int(time_to_wait))
-    except Exception as e:
-        print(f"[{time.strftime('%H:%M:%S')}] ⚠️ TIME CALC ERROR: {e}. Falling back to default T2={max(0, client_timeout_s - MAX_NETWORK_LATENCY)}s.")
-        return max(0, client_timeout_s - MAX_NETWORK_LATENCY)
+# def push_task_to_client(task_data: Dict[str, Any]):
+#     global current_waiting_event, current_response_data
+#     with data_lock:
+#         notifications_sent = 0
+#         if current_waiting_event:
+#             current_response_data = {"status": "success", "data": task_data.copy()}
+#             current_waiting_event.set()
+#             notifications_sent = 1
+#     print(f"[{time.strftime('%H:%M:%S')}] ✅ PUSHED: New booking task (ID: {task_data.get('id')}). Waking up {notifications_sent} client.")
 
-def push_task_to_client(task_data: Dict[str, Any]):
-    global current_waiting_event, current_response_data
-    with data_lock:
-        notifications_sent = 0
-        if current_waiting_event:
-            current_response_data = {"status": "success", "data": task_data.copy()}
-            current_waiting_event.set()
-            notifications_sent = 1
-    print(f"[{time.strftime('%H:%M:%S')}] ✅ PUSHED: New booking task (ID: {task_data.get('id')}). Waking up {notifications_sent} client.")
 
-# --- 新增：數據格式化函式 ---
+# ----------------------------------------------------------------------------
+# 數據格式化函式 - 將單筆訂票數據格式化為前端表格所需的精簡格式
+# ----------------------------------------------------------------------------
 def format_ticket_data(ticket: Dict[str, Any]) -> Dict[str, Any]:
-    """將單筆訂票數據格式化為前端表格所需的精簡格式"""
 
     # 訂票日期 (Order Date): 格式 'hh:mm'
     try:
@@ -120,19 +132,23 @@ def format_ticket_data(ticket: Dict[str, Any]) -> Dict[str, Any]:
     from_info = f"{ticket.get('from_station', 'N/A')} {ticket.get('from_time', 'N/A')}"
     to_info = f"{ticket.get('to_station', 'N/A')} {ticket.get('to_time', 'N/A')}"
 
-    # 創建新的精簡字典
+    # Dict 的內容需含所有前端所需的資料 (如: booking data, personal data, history, ...)
     formatted_ticket = {
         "id": ticket["id"],
         "status": ticket.get("status"),
         "result": ticket.get("status", "N/A"),
-        "code": ticket.get("code", "N/A"),
+        "code": ticket.get("code", "N/A"),                      # ??
         "name": ticket.get("name", "N/A"),
-        "id_number": ticket.get("id_number", "N/A"), # 雖然表格不顯示，但保留原始數據
-        "train_no": ticket.get("train_no", "N/A"),
-        "formatted_order_date": formatted_order_date,
+        "personal_id": ticket.get("personal_id", "N/A"),        # 雖然表格不顯示，但保留原始數據
+        "phone_num": ticket.get("phone_num", "N/A"),            # 雖然表格不顯示，但保留原始數據
+        "email": ticket.get("email", "N/A"),                    # 雖然表格不顯示，但保留原始數據
+        "search_by": ticket.get("search_by", "N/A"),
+        "train_id": ticket.get("train_id", "N/A"),
+        "formatted_order_date": formatted_order_date,           # 表格暫無使用此資料
         "formatted_travel_date": formatted_travel_date,
         "from_info": from_info,
         "to_info": to_info,
+        "search_data": "TBD",
     }
     return formatted_ticket
 
@@ -146,32 +162,68 @@ def format_ticket_data(ticket: Dict[str, Any]) -> Dict[str, Any]:
 def index():
     if request.method == "POST":
         data = request.form
-        # ...原本的訂票資料處理...
+
+        # 1. 獲取姓名
+        name = data.get("name")
+        
+        # 2. 根據姓名在乘客檔案中查找身分證字號
+        p = get_passenger_data_by_name(name)
+        personal_id = p.get("personal_id", "")
+        phone_num   = p.get("phone_num", "")
+        email       = p.get("email", "")
+        
+        if not name or not personal_id:
+            # 處理沒有足夠資料的情況
+            print(f"訂票失敗：姓名 '{name}' 找不到對應的身分證字號。")
+            # 這裡簡單地跳過訂票，並重導向
+            return redirect(url_for("index"))
+
         ticket = {
             "id": get_new_id(),
             "status": "訂票待處理",
             "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "name": data.get("name"),
-            "id_number": data.get("id_number"),
-            "train_no": data.get("train_no"),
+            "name": name,                       # 表單提交
+            "personal_id": personal_id,         # 後端查找
+            "phone_num": phone_num,             # 後端查找
+            "email": email,                     # 後端查找
+            "search_by": search_by,
+            "train_id": data.get("train_id"),
             "travel_date": data.get("travel_date"),
             "from_station": data.get("from_station"),
-            "from_time": data.get("from_time"),
+            "from_time": data.get("from_time", ""), # 從 index.html 移除的欄位給預設值
             "to_station": data.get("to_station"),
-            "to_time": data.get("to_time"),
+            "to_time": data.get("to_time", ""), # 從 index.html 移除的欄位給預設值
         }
-        requests = load_json(TICKET_REQUEST_FILE)
-        requests.append(ticket)
-        save_json(TICKET_REQUEST_FILE, requests)
-        # 新增：檢查是否需要新增乘客資料
-        add_passenger_if_new(ticket["name"], ticket["id_number"])
-        return redirect(url_for("index"))
-    requests = load_json(TICKET_REQUEST_FILE)
-    # 雖然 index.html 的表格內容由 AJAX 獲取，但這裡仍需傳遞數據以供初始渲染
-    formatted_requests = [format_ticket_data(r) for r in requests]
-    return render_template("index.html", requests=formatted_requests)
 
-# 2. JSON API 訂票提交路由 (保持不變)
+        booking_requests = load_json(TICKET_REQUEST_FILE)
+        booking_requests.append(ticket)
+        save_json(TICKET_REQUEST_FILE, booking_requests)
+        # 檢查是否需要新增乘客資料 (雖然應該已經存在，但保留檢查)
+        add_passenger_if_new(ticket["name"], ticket["personal_id"], ticket["phone_num"], ticket["email"])
+        return redirect(url_for("index"))
+
+        # --- POST 處理邏輯結束 ---
+            
+    elif request.method == "GET":
+        booking_requests = load_json(TICKET_REQUEST_FILE)
+        passengers = load_json(PASSENGER_FILE) # **載入乘客資料**
+        formatted_booking_requests = [format_ticket_data(r) for r in booking_requests]
+        
+        # 傳遞 booking_requests 和 passengers
+        return render_template("index.html", booking_requests=formatted_booking_requests, passengers=passengers)
+
+
+
+def parse_search_data(search_data: str):
+    
+    if (search_data.isdigit()):
+        return "train_id", search_data, "TBD"
+        
+    else:
+        return "from_time", "TBD", search_data
+
+
+# 2. JSON API 訂票提交路由
 @app.route("/api/submit_ticket", methods=["POST"])
 def api_submit_ticket():
     try:
@@ -179,35 +231,55 @@ def api_submit_ticket():
 
         if not data:
             return jsonify({"status": "error", "message": "Missing JSON data in request body."}), 400
+        else:
+            print(data)
 
-        required_fields = ["name", "id_number", "train_no", "travel_date", "from_station", "from_time", "to_station", "to_time"]
+        required_fields = ["name", "travel_date", "from_station", "to_station", "search_data"]
+
         for field in required_fields:
             if not data.get(field):
                  return jsonify({"status": "error", "message": f"Missing required field: {field}"}), 400
+
+        name = data.get("name")
+        pdata = get_passenger_data_by_name(name)        # 根據 name 查找 passenger data
+        personal_id = pdata.get("personal_id", "")
+        phone_num   = pdata.get("phone_num", "")
+        email       = pdata.get("email", "")
+
+        if not personal_id:
+             return jsonify({"status": "error", "message": f"Passenger name '{name}' not found or missing personal_id."}), 400
+         
+        search_by, train_id, from_time = parse_search_data(data['search_data'])
+
+        print(f"search_by = {search_by}")
+        print(f"train_id  = {train_id}")
+        print(f"from_time = {from_time}")
 
         ticket = {
             "id": get_new_id(),
             "status": "待處理",
             "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "name": data["name"],
-            "id_number": data["id_number"],
-            "train_no": data["train_no"],
+            "name": name,
+            "personal_id": personal_id,         # 後端查找
+            "phone_num": phone_num,             # 後端查找
+            "email": email,                     # 後端查找
+            "search_by": search_by,
+            "train_id": train_id,
             "travel_date": data["travel_date"],
             "from_station": data["from_station"],
-            "from_time": data["from_time"],
+            "from_time": from_time,
             "to_station": data["to_station"],
-            "to_time": data["to_time"],
-            "code": None
+            # "code": None
         }
 
-        requests = load_json(TICKET_REQUEST_FILE)
-        requests.append(ticket)
-        save_json(TICKET_REQUEST_FILE, requests)
-        # 新增：自動新增乘客資料
-        add_passenger_if_new(ticket["name"], ticket["id_number"])
-        push_task_to_client(ticket)
+        booking_requests = load_json(TICKET_REQUEST_FILE)
+        booking_requests.append(ticket)
+        save_json(TICKET_REQUEST_FILE, booking_requests)
 
-        print(f"[{time.strftime('%H:%M:%S')}] 📝 JSON SUBMIT: New task ID {ticket['id']} created.")
+        add_passenger_if_new(ticket["name"], ticket["personal_id"], ticket["phone_num"], ticket["email"])        # 再次檢查/新增
+        
+        print(f"[{time.strftime('%H:%M:%S')}] API SUBMIT: New task ID {ticket['id']} created.")
+
         return jsonify({
             "status": "success",
             "message": "Booking task submitted successfully.",
@@ -215,7 +287,7 @@ def api_submit_ticket():
         }), 201
 
     except Exception as e:
-        print(f"[{time.strftime('%H:%M:%S')}] ❌ JSON SUBMIT UNKNOWN ERROR: {e}")
+        print(f"[{time.strftime('%H:%M:%S')}] API SUBMIT UNKNOWN ERROR: {e}")
         return jsonify({"status": "internal_error", "message": str(e)}), 500
 
 
@@ -232,20 +304,19 @@ def history():
 # 4. AJAX 短輪詢路由 (已修改：使用格式化數據和新模板)
 @app.route("/api/pending_table", methods=["GET"])
 def api_pending_table():
-    requests = load_json(TICKET_REQUEST_FILE)
+    booking_requests = load_json(TICKET_REQUEST_FILE)
 
     # 應用格式化函式
-    formatted_requests = [format_ticket_data(r) for r in requests]
+    formatted_booking_requests = [format_ticket_data(r) for r in booking_requests]
 
     # 新的模板字串，配合 index.html 的新表頭
     template_str = """
-    {% for r in formatted_requests %}
+    {% for r in formatted_booking_requests %}
     <tr>
         <td>{{ r.id }}</td>
         <td>{{ r.status }}</td>
-        <td>{{ r.formatted_order_date }}</td>
         <td>{{ r.name }}</td>
-        <td>{{ r.train_no }}</td>
+        <td>{{ r.train_id }}</td>
         <td>{{ r.formatted_travel_date }}</td>
         <td>{{ r.from_info }}</td>
         <td>{{ r.to_info }}</td>
@@ -257,12 +328,15 @@ def api_pending_table():
     {% endfor %}
     """
 
-    rendered_html = render_template_string(template_str, formatted_requests=formatted_requests)
+    rendered_html = render_template_string(template_str, formatted_booking_requests=formatted_booking_requests)
     return rendered_html, 200
 
 # 5. Long Polling 端點 (保持不變)
 @app.route('/poll_for_update', methods=['POST'])
 def long_poll_endpoint():
+
+    # return "OK", 200
+
     # ...existing code...
     global current_waiting_event, current_response_data
     client_timeout = BASE_CLIENT_TIMEOUT
@@ -274,16 +348,13 @@ def long_poll_endpoint():
     except Exception:
         pass
 
-    max_wait_time_server = calculate_server_timeout(client_timeout, client_timestamp)
-    print(f"[{time.strftime('%H:%M:%S')}] 🔥 RECEIVED: /poll_for_update. T2={max_wait_time_server}s, Client timeout={client_timeout}, Client timestamp={client_timestamp}")
-
-    requests = load_json(TICKET_REQUEST_FILE)
-    if requests:
-        print(f"[{time.strftime('%H:%M:%S')}] 🚨 WAITING TASKS FOUND: Returning {len(requests)} pending tasks immediately.")
+    booking_requests = load_json(TICKET_REQUEST_FILE)
+    if booking_requests:
+        print(f"[{time.strftime('%H:%M:%S')}] 🚨 WAITING TASKS FOUND: Returning {len(booking_requests)} pending tasks immediately.")
         return jsonify({
             "status": "initial_sync",
             "message": "Found pending tasks in queue.",
-            "data": requests.copy()
+            "data": booking_requests.copy()
         }), 200
 
     new_client_event = threading.Event()
@@ -296,7 +367,7 @@ def long_poll_endpoint():
         current_waiting_event = new_client_event
         current_response_data = None
 
-    is_triggered = new_client_event.wait(timeout=max_wait_time_server)
+    is_triggered = new_client_event.wait(timeout=30) # ?? 30 ??
 
     with data_lock:
         response_payload = current_response_data
@@ -314,6 +385,10 @@ def long_poll_endpoint():
     return jsonify({"status": "internal_error", "message": "Unknown trigger state."}), 500
 
 
+@app.route("/admin", methods=["GET", "POST"])
+def admin():
+    return "Under construction", 200
+
 # 6. 任務結果回傳端點 (保持不變)
 @app.route('/update_status', methods=['POST'])
 def update_status():
@@ -330,9 +405,9 @@ def update_status():
         task_id = int(task_id)
 
         with data_lock:
-            requests = load_json(TICKET_REQUEST_FILE)
+            booking_requests = load_json(TICKET_REQUEST_FILE)
             found = False
-            for ticket in requests:
+            for ticket in booking_requests:
                 if ticket.get("id") == task_id:
                     ticket["status"] = status
                     ticket["result_details"] = details
@@ -342,7 +417,7 @@ def update_status():
                         ticket["code"] = details["code"]
 
                     if status in ["booked", "failed"]:
-                        requests.remove(ticket)
+                        booking_requests.remove(ticket)
                         history_data = load_json(TICKET_HISTORY_FILE)
                         history_data.append(ticket)
                         save_json(TICKET_HISTORY_FILE, history_data)
@@ -350,7 +425,7 @@ def update_status():
                     found = True
                     break
 
-            save_json(TICKET_REQUEST_FILE, requests)
+            save_json(TICKET_REQUEST_FILE, booking_requests)
 
         if found:
             return jsonify({"status": "success", "message": f"Task {task_id} status updated to {status}."}), 200
@@ -362,16 +437,19 @@ def update_status():
         return jsonify({"status": "internal_error", "message": str(e)}), 500
 
 
-def add_passenger_if_new(name, id_number):
+def add_passenger_if_new(name, personal_id, phone_num, email):
     passengers = load_json(PASSENGER_FILE)
     for p in passengers:
-        if p["name"] == name and p["id_number"] == id_number:
+        if p["name"] == name and p["personal_id"] == personal_id:
+            # [scott]: still update phone number & email
             return  # Already exists
     # Add new passenger with default identity
     new_passenger = {
         "id": get_new_passenger_id(),
         "name": name,
-        "id_number": id_number,
+        "personal_id": personal_id,
+        "phone_num": phone_num,
+        "email": email,
         "identity": "一般"
     }
     passengers.append(new_passenger)
@@ -403,7 +481,9 @@ def passenger_page():
         passenger = {
             "id": get_new_passenger_id(),
             "name": data.get("name"),
-            "id_number": data.get("id_number"),
+            "personal_id": data.get("personal_id"),
+            "phone_num": data.get("phone_num"),
+            "email": data.get("email"),
             "identity": data.get("identity")
         }
         passengers = load_json(PASSENGER_FILE)
@@ -414,6 +494,7 @@ def passenger_page():
     return render_template("passenger.html", passengers=passengers)
 
 if __name__ == "__main__":
+
     arg_parser = ArgumentParser(
         usage='Usage: python ' + __file__ + ' [--port <port>] [--help]'
     )
