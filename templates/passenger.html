@@ -29,15 +29,21 @@
             form button { width: 100%; font-size: 1rem; margin-top: 0.7rem; padding: 0.6rem 0; }
             table, th, td { font-size: 0.85rem; padding: 0.4rem 0.2rem; }
         }
+        .alert { padding: 0.75rem 1.25rem; margin-bottom: 1rem; border: 1px solid transparent; border-radius: 0.25rem; font-weight: bold; }
+        .success-alert { color: #155724; background-color: #d4edda; border-color: #c3e6cb; }
+        .error-alert { color: #721c24; background-color: #f8d7da; border-color: #f5c6cb; }
     </style>
 </head>
 <body>
     <header>乘客個人資料</header>
     <div class="container">
         <h2>新增乘客資料</h2>
-        <!-- {% if success %}
-            <div class="success">新增成功！</div>
-        {% endif %} -->
+        {% if success %}
+        <div class="alert success-alert">✅ 乘客新增成功！</div>
+        {% endif %}
+        {% if error %}
+        <div class="alert error-alert">❌ {{ error }}</div>
+        {% endif %}
         <form method="post">
             <label>
                 姓名
@@ -57,7 +63,12 @@
             </label>
             <label>
                 身份
-                <input name="identity" required autocomplete="off">
+                <select name="identity" required>
+                    <option value="一般">一般</option>
+                    <option value="學生">學生</option>
+                    <option value="老人">老人</option>
+                    <option value="孩童">孩童</option>
+                </select>
             </label>
             <button type="submit">新增</button>
         </form>
