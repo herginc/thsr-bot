@@ -4,6 +4,26 @@ Use [Flask](http://flask.pocoo.org/) to parse HTTP POST messages from websites o
 
 Keywords: [Flask](http://flask.pocoo.org/), [Flask Source](https://github.com/pallets/flask)
 
+## My environments
+
+The program will be developed and tested in the following environments.
+
+Back-End Server:
+
+1) MS Windows 7 + Python 3.8.10  (the program is launched by `python app.py`)
+2) Linux 6.8.10 + Python 3.10.12 (the program is launched by `gunicorn --bind 0.0.0.0:8000 app:app`)
+
+Front-End Client:
+
+1) Chrome browser running on Windows PC
+2) Chrome browser running on Android Phone
+
+## Design Concept
+
+1. FE client send booking order to BE server via HTTP POST messages
+2. BE server create a thread to handle further booking process
+3. Client send '/api/status' request message to server only when active booking order is on-going
+
 ## Getting started
 
 ```
@@ -38,8 +58,7 @@ pip install -r requirements_thsr_bot.txt --ignore-requires-python
 [2025-10-28 19:37:45 +0800] [24336] [INFO] Booting worker with pid: 24336
 ```
 
-
-## Deploying on Render
+## Deploying on Render (Suspend support)
 
 Region: Singapore
 Build Command: pip install -r requirements_thsr_bot.txt --ignore-requires-python
@@ -50,8 +69,4 @@ Auto-Deploy: Off
 
 ## Appendix
 
-We may use Microsoft teams webhook to trigger an thsr-inquiry immediately
-
-```
-<Teams @ Home> -- <Teams @ Office> -- <Python@Office> -- inquiry -- <Flask-THSR>
-```
+TBD

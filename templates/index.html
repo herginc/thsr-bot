@@ -142,6 +142,10 @@
         const statusTableBody = document.getElementById('status-table-body');
         const passengerSelect = document.getElementById('passenger-select');
 
+        // 【新增/修改】追蹤變數和計時器 ID
+        let hasActiveTasks = false;
+        let statusIntervalId = null;
+
         // 載入乘客資料
         function loadPassengers() {
             fetch(API_PASSENGER_URL)
@@ -153,10 +157,8 @@
                     } else {
                         passengers.forEach(p => {
                             const option = document.createElement('option');
-                            // ✅ 修正 1：使用 p.id 作為 value
-                            option.value = p.id; 
-                            // ✅ 修正 2：只顯示姓名，不再顯示 personal_id 的部分資訊
-                            option.textContent = p.name; 
+                            option.value = p.id;            // ✅ 修正 1：使用 p.id 作為 value
+                            option.textContent = p.name;    // ✅ 修正 2：只顯示姓名，不再顯示 personal_id 的部分資訊
                             option.dataset.name = p.name; 
                             passengerSelect.appendChild(option);
                         });
@@ -167,7 +169,7 @@
                 });
         }
 
-        // 提交表單處理
+        // 提交表單處理 (提交成功後會呼叫 fetchAndUpdateStatus)
         document.getElementById('booking-form').addEventListener('submit', function(e) {
             e.preventDefault();
             const form = e.target;
@@ -243,7 +245,7 @@
         }
 
         // --- 取得並更新任務狀態 ---
-        function fetchAndUpdateStatus() {
+        function fetchAndUpdateStatus_old2() {
             // 假設 API_STATUS_URL 和 statusTableBody 已經定義
             fetch(API_STATUS_URL)
                 .then(response => response.json())
@@ -324,7 +326,7 @@
                         
                         if (task.status === 'pending' || task.status === 'running' || task.status === 'cancelling') {
                             const deleteButton = document.createElement('button');
-                            deleteButton.textContent = (task.status === 'running' || task.status === 'cancelling') ? '強制取消' : '刪除';
+                            deleteButton.textContent = (task.status === 'running' || task.status === 'cancelling') ? '放棄' : '刪除';
                             deleteButton.className = 'delete-button';
                             // 確保呼叫函式時使用正確的 ID 欄位
                             deleteButton.onclick = () => cancelBooking(task.id); 
@@ -340,76 +342,170 @@
                 });
         }
 
-        // 請確認您的 index.html 中也有定義 cancelBooking 函式。
-
-
-        // 獲取並更新任務狀態
-        function fetchAndUpdateStatus_old() {
+        function fetchAndUpdateStatus() {
+            // 假設 API_STATUS_URL 和 statusTableBody 已經定義
             fetch(API_STATUS_URL)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
-                    return response.json();
-                })
-                .then(tasks => {
-                    // 清空舊的表格內容
+                .then(response => response.json())
+                .then(data => {
+                    const tasks = data.tasks; 
                     statusTableBody.innerHTML = '';
                     
+                    // 【修改點 1】重置 activeTasks 旗標
+                    let newActiveTasks = false; 
 
-                    if (tasks.length === 0) {
-                        statusTableBody.innerHTML = '<tr><td colspan="7">目前沒有待處理或正在執行的任務。</td></tr>';
+                    // 1. 健壯性檢查：確保 tasks 是個陣列
+                    if (!Array.isArray(tasks)) {
+                        const errorMessage = data.message || `API 返回資料格式錯誤: ${JSON.stringify(data)}`;
+                        console.error('API Error:', errorMessage, data);
+                        // 假設您的表格有 9 欄 (8 個資料欄位 + 1 個操作欄位)
+                        statusTableBody.innerHTML = `<tr><td colspan="9" style="color: #dc3545; font-weight: bold;">無法載入狀態資訊: ${errorMessage}</td></tr>`;
+                        // 即使錯誤，我們也假設沒有活躍任務
+                        updateInterval(false); 
                         return;
-                    } else {
-                        statusTableBody.innerHTML = `<tr><td colspan="7">scott testing ... 目前任務數量：${tasks.length}</td></tr>`;
+                    }
+                    
+                    if (tasks.length === 0) {
+                        statusTableBody.innerHTML = '<tr><td colspan="9">目前沒有進行中的訂票任務。</td></tr>';
+                        // 【修改點 2】沒有任務時停止更新
+                        updateInterval(false); 
                         return;
                     }
 
-                    // 迭代並新增任務狀態到表格
                     tasks.forEach(task => {
+                        // 【修改點 3】檢查是否有 pending 或 running 任務
+                        if (task.status === 'pending' || task.status === 'running') {
+                            newActiveTasks = true;
+                        }
+
+                        // 2. 解析 train_info 欄位
+                        // 格式: 從 [Start] 到 [End] ([Date] [Time])
+                        const match = task.train_info.match(/從\s*([^到]+)\s*到\s*([^ (]+)\s*\(([^ ]+)\s*([^)]+)\)/);
+                        let start_station = 'N/A';
+                        let end_station = 'N/A';
+                        let travel_date = 'N/A';
+                        let train_time = 'N/A';
+                        
+                        if (match) {
+                            start_station = match[1].trim();
+                            end_station = match[2].trim();
+                            travel_date = match[3].trim();
+                            train_time = match[4].trim();
+                        }
+
                         const row = statusTableBody.insertRow();
                         
-                        // 1. 任務ID
-                        row.insertCell().textContent = task.task_id;
-                        // 2. 狀態
-                        row.insertCell().textContent = task.status;
-                        // 3. 訊息
-                        row.insertCell().textContent = task.message;
-                        // 4. 姓名
-                        row.insertCell().textContent = task.data.name || 'N/A';
-                        // 5. 提交時間
-                        row.insertCell().textContent = task.submit_time ? task.submit_time.split(' ')[1] : '—'; // 僅顯示時間
-                        // 6. 更新時間
-                        row.insertCell().textContent = task.update_time ? task.update_time.split(' ')[1] : '—'; // 僅顯示時間
+                        // 狀態 class 名稱 (用於 CSS 樣式)
+                        const statusClass = `status-${task.status}`; 
                         
-                        // 7. 刪除按鈕 (這裡只是佔位，您可能還有取消邏輯)
+                        // 狀態中文標籤
+                        let statusLabel = task.status;
+                        if (task.status === 'pending') statusLabel = '等待中';
+                        else if (task.status === 'running') statusLabel = '訂票中';
+                        else if (task.status === 'success') statusLabel = '✅ 成功';
+                        else if (task.status === 'failed') statusLabel = '❌ 失敗';
+                        else if (task.status === 'cancelling') statusLabel = '取消中';
+
+                        // 1. ID (使用 task.id)
+                        row.insertCell().textContent = task.id; 
+
+                        // 2. 姓名 (使用 task.passenger_name)
+                        row.insertCell().textContent = task.passenger_name; 
+
+                        // 3. 訂票資訊 (新格式)
+                        // 這是表格中的 '訂票資訊 (新格式)' 欄位。原始程式碼使用了 task.message，但標題是『訂票資訊 (新格式)』，
+                        // 且下方將 message 換成了 起訖站點。我們依照您提供的程式碼邏輯（但將欄位標題與內容對應）
+                        // 這裡應該是 train_info 的簡潔版或其他描述。
+                        // 根據程式碼邏輯，第 3 欄位原本是 `task.message`，現在新格式似乎是指將其與 station 資訊結合。
+                        // 為了與您原來的程式碼結構保持一致，我將 task.message 放在第 4 欄，而將起訖站點資訊放在第 3 欄。
+                        // 但是表格標題是：ID, 姓名, 訂票資訊 (新格式), 狀態, 訊息, 提交時間, 更新時間, 操作 (共 8 欄)
+                        // 而您的 JS 程式碼插入了 7 個儲存格（不含操作），且順序是：
+                        // ID, 姓名, 訂票結果/進度 (task.message), 狀態, 起訖站點 (新格式), 更新時間
+                        
+                        // **我們將欄位與您提供的 HTML 保持一致：**
+                        // ID -> task.id (OK)
+                        // 姓名 -> task.passenger_name (OK)
+                        // 訂票資訊 (新格式) -> ${start_station} → ${end_station}, ${travel_date} ${train_time}
+                        // 狀態 -> statusLabel (OK)
+                        // 訊息 -> task.message (OK)
+                        // 提交時間 -> N/A (此欄位在 JS 裡被移除了，所以我們將其補回，但因為 API 沒給 submit_time，所以用 N/A)
+                        // 更新時間 -> task.update_time (OK)
+                        // 操作 -> Button (OK)
+
+
+                        // 3. 訂票資訊 (新格式) - 站點與時間
+                        row.insertCell().textContent = `${start_station} → ${end_station} (${travel_date} ${train_time})`;
+                        
+                        // 4. 狀態
+                        const statusCell = row.insertCell();
+                        statusCell.innerHTML = `<span class="${statusClass}">${statusLabel}</span>`;
+
+                        // 5. 訊息 (使用 task.message)
+                        row.insertCell().textContent = task.message || '等待中...';
+                        
+                        // 6. 提交時間 (API 未提供，假設從 train_info 解析)
+                        // 由於 API 提供的資料 task 裡沒有 submit_time，這裡暫時使用 —
+                        // row.insertCell().textContent = task.submit_time ? task.submit_time.split(' ')[1] : '—'; 
+                        row.insertCell().textContent = 'TBD'; // 假設後端沒有提供
+
+                        // 7. 更新時間 (僅顯示時間部分)
+                        row.insertCell().textContent = task.update_time ? task.update_time.split(' ')[1] : '—';
+                        
+                        // 8. 操作
                         const deleteCell = row.insertCell();
+                        
                         if (task.status === 'pending' || task.status === 'running' || task.status === 'cancelling') {
                             const deleteButton = document.createElement('button');
-                            deleteButton.textContent = (task.status === 'running' || task.status === 'cancelling') ? '強制取消' : '刪除';
+                            deleteButton.textContent = (task.status === 'running' || task.status === 'cancelling') ? '放棄' : '刪除';
                             deleteButton.className = 'delete-button';
-                            // 這裡應呼叫您的取消函式
-                            // deleteButton.onclick = () => cancelBooking(task.task_id); 
+                            // 確保呼叫函式時使用正確的 ID 欄位
+                            deleteButton.onclick = () => cancelBooking(task.id); 
                             deleteCell.appendChild(deleteButton);
                         } else {
                             deleteCell.textContent = '—';
                         }
                     });
+                    
+                    // 【修改點 4】在任務列表渲染完成後，根據新的活躍任務狀態更新計時器
+                    updateInterval(newActiveTasks);
+
                 })
                 .catch(error => {
                     console.error('Fetching status failed:', error);
-                    statusTableBody.innerHTML = '<tr><td colspan="7">無法載入狀態資訊。</td></tr>';
+                    statusTableBody.innerHTML = '<tr><td colspan="9" style="color: #dc3545; font-weight: bold;">無法載入狀態資訊：網路或伺服器連線錯誤。</td></tr>';
+                    // 【修改點 5】如果失敗，停止更新，直到使用者再次操作
+                    updateInterval(false); 
                 });
         }
 
-
+        // 【新增函式】控制自動更新的計時器
+        function updateInterval(shouldBeActive) {
+            // 檢查是否需要啟動/維持計時器
+            if (shouldBeActive) {
+                // 如果目前沒有計時器，則啟動一個
+                if (statusIntervalId === null) {
+                    console.log("啟動狀態自動更新 (5 秒)");
+                    statusIntervalId = setInterval(fetchAndUpdateStatus, 5000);
+                    hasActiveTasks = true;
+                }
+            } else {
+                // 如果目前有計時器，但不需要了，則清除它
+                if (statusIntervalId !== null) {
+                    console.log("停止狀態自動更新");
+                    clearInterval(statusIntervalId);
+                    statusIntervalId = null;
+                    hasActiveTasks = false;
+                }
+            }
+        }
+        
         // 首次載入和每 5 秒自動更新
         document.addEventListener('DOMContentLoaded', () => {
             loadPassengers(); // 確保乘客資料先載入
             fetchAndUpdateStatus();
         });
-        setInterval(fetchAndUpdateStatus, 5000);
 
+        // 移除原有的 setInterval(fetchAndUpdateStatus, 5000);
+        // 現在由 updateInterval(true/false) 邏輯來控制計時器的啟動與停止。
     </script>
 </body>
 </html>

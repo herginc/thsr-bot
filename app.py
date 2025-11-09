@@ -162,7 +162,7 @@ def load_tasks_old():
     with data_lock:
         booking_tasks = load_json(TASKS_FILE)
         
-        FINAL_STATUSES = ['success', 'failed', 'cancelled']
+        FINAL_STATUSES = ['success', 'failed', 'cancelled']     # scott: add deleted or aborted 放棄
         retained_tasks = []
         archived_tasks = []
         now_cst = datetime.now(CST_TIMEZONE)
@@ -764,7 +764,8 @@ def run_booking_worker():
                     if current_task['status'] == 'cancelling':
                         final_status = 'cancelled'
                         if '被使用者取消' not in result_msg:
-                            result_msg = '任務被使用者強制取消。'
+                            # result_msg = '任務被使用者強制取消。'
+                            result_msg = '使用者中斷任務'
                     
                     # 如果成功，將結果寫入 history.json (略過)
                     # 確保將訂位代號存入 task 物件
