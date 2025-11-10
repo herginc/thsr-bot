@@ -245,103 +245,6 @@
         }
 
         // --- 取得並更新任務狀態 ---
-        function fetchAndUpdateStatus_old2() {
-            // 假設 API_STATUS_URL 和 statusTableBody 已經定義
-            fetch(API_STATUS_URL)
-                .then(response => response.json())
-                .then(data => {
-                    const tasks = data.tasks; 
-                    statusTableBody.innerHTML = '';
-
-                    // 1. 健壯性檢查：確保 tasks 是個陣列
-                    if (!Array.isArray(tasks)) {
-                        const errorMessage = data.message || `API 返回資料格式錯誤: ${JSON.stringify(data)}`;
-                        console.error('API Error:', errorMessage, data);
-                        // 假設您的表格有 9 欄 (8 個資料欄位 + 1 個操作欄位)
-                        statusTableBody.innerHTML = `<tr><td colspan="9" style="color: #dc3545; font-weight: bold;">無法載入狀態資訊: ${errorMessage}</td></tr>`;
-                        return;
-                    }
-                    
-                    if (tasks.length === 0) {
-                        statusTableBody.innerHTML = '<tr><td colspan="9">目前沒有進行中的訂票任務。</td></tr>';
-                        return;
-                    }
-
-                    tasks.forEach(task => {
-                        // 2. 解析 train_info 欄位
-                        // 格式: 從 [Start] 到 [End] ([Date] [Time])
-                        const match = task.train_info.match(/從\s*([^到]+)\s*到\s*([^ (]+)\s*\(([^ ]+)\s*([^)]+)\)/);
-                        let start_station = 'N/A';
-                        let end_station = 'N/A';
-                        let travel_date = 'N/A';
-                        let train_time = 'N/A';
-                        
-                        if (match) {
-                            start_station = match[1].trim();
-                            end_station = match[2].trim();
-                            travel_date = match[3].trim();
-                            train_time = match[4].trim();
-                        }
-
-                        const row = statusTableBody.insertRow();
-                        
-                        // 狀態 class 名稱 (用於 CSS 樣式)
-                        const statusClass = `status-${task.status}`; 
-                        
-                        // 狀態中文標籤
-                        let statusLabel = task.status;
-                        if (task.status === 'pending') statusLabel = '等待中';
-                        else if (task.status === 'running') statusLabel = '訂票中';
-                        else if (task.status === 'success') statusLabel = '✅ 成功';
-                        else if (task.status === 'failed') statusLabel = '❌ 失敗';
-                        else if (task.status === 'cancelling') statusLabel = '取消中';
-
-                        // 1. ID (使用 task.id)
-                        row.insertCell().textContent = task.id; 
-
-                        // 2. 姓名 (使用 task.passenger_name)
-                        row.insertCell().textContent = task.passenger_name; 
-
-                        // 3. 訂票結果/進度
-                        row.insertCell().textContent = task.message || '等待中...';
-                        
-                        // 4. 狀態
-                        const statusCell = row.insertCell();
-                        statusCell.innerHTML = `<span class="${statusClass}">${statusLabel}</span>`;
-                        
-                        // 5. 起訖站點 
-                        row.insertCell().textContent = `${start_station} → ${end_station}, ${travel_date} ${train_time}`;
-                        
-                        // // 6. 乘車日期
-                        // row.insertCell().textContent = travel_date;
-                        
-                        // // 7. 最早時間
-                        // row.insertCell().textContent = train_time;
-                        
-                        // 6. 更新時間 (僅顯示時間部分)
-                        row.insertCell().textContent = task.update_time ? task.update_time.split(' ')[1] : '—';
-                        
-                        // 7. 操作
-                        const deleteCell = row.insertCell();
-                        
-                        if (task.status === 'pending' || task.status === 'running' || task.status === 'cancelling') {
-                            const deleteButton = document.createElement('button');
-                            deleteButton.textContent = (task.status === 'running' || task.status === 'cancelling') ? '放棄' : '刪除';
-                            deleteButton.className = 'delete-button';
-                            // 確保呼叫函式時使用正確的 ID 欄位
-                            deleteButton.onclick = () => cancelBooking(task.id); 
-                            deleteCell.appendChild(deleteButton);
-                        } else {
-                            deleteCell.textContent = '—';
-                        }
-                    });
-                })
-                .catch(error => {
-                    console.error('Fetching status failed:', error);
-                    statusTableBody.innerHTML = '<tr><td colspan="9" style="color: #dc3545; font-weight: bold;">無法載入狀態資訊：網路或伺服器連線錯誤。</td></tr>';
-                });
-        }
-
         function fetchAndUpdateStatus() {
             // 假設 API_STATUS_URL 和 statusTableBody 已經定義
             fetch(API_STATUS_URL)
@@ -388,8 +291,21 @@
                         if (match) {
                             start_station = match[1].trim();
                             end_station = match[2].trim();
-                            travel_date = match[3].trim();
+                            let full_date = match[3].trim(); // 原始格式: YYYY-MM-DD
                             train_time = match[4].trim();
+
+                            // 【⭐ 核心修改：轉換日期格式 ⭐】
+                            if (full_date !== 'N/A' && full_date.includes('-')) {
+                                const dateParts = full_date.split('-');
+                                // 僅取月份 (dateParts[1]) 和日期 (dateParts[2])，並以 '/' 連接
+                                if (dateParts.length === 3) {
+                                    travel_date = `${dateParts[1]}/${dateParts[2]}`; // MM/DD
+                                } else {
+                                    travel_date = full_date; // Fallback
+                                }
+                            } else {
+                                travel_date = full_date;
+                            }
                         }
 
                         const row = statusTableBody.insertRow();
@@ -404,37 +320,24 @@
                         else if (task.status === 'success') statusLabel = '✅ 成功';
                         else if (task.status === 'failed') statusLabel = '❌ 失敗';
                         else if (task.status === 'cancelling') statusLabel = '取消中';
+                        else if (task.status === 'cancelled') statusLabel = '❌ 取消';
 
-                        // 1. ID (使用 task.id)
-                        row.insertCell().textContent = task.id; 
+                        // 1. ID (使用 task.id) 
+                        // let displayId = task.id;
+                        // // 保持前端 ID 顯示邏輯，以顯示短 ID
+                        // if (displayId.length > 10 && displayId.includes('-')) {
+                        //     displayId = displayId.substring(8); 
+                        // }
+                        // row.insertCell().textContent = displayId;
+                        row.insertCell().textContent = task.id;
 
                         // 2. 姓名 (使用 task.passenger_name)
                         row.insertCell().textContent = task.passenger_name; 
 
-                        // 3. 訂票資訊 (新格式)
-                        // 這是表格中的 '訂票資訊 (新格式)' 欄位。原始程式碼使用了 task.message，但標題是『訂票資訊 (新格式)』，
-                        // 且下方將 message 換成了 起訖站點。我們依照您提供的程式碼邏輯（但將欄位標題與內容對應）
-                        // 這裡應該是 train_info 的簡潔版或其他描述。
-                        // 根據程式碼邏輯，第 3 欄位原本是 `task.message`，現在新格式似乎是指將其與 station 資訊結合。
-                        // 為了與您原來的程式碼結構保持一致，我將 task.message 放在第 4 欄，而將起訖站點資訊放在第 3 欄。
-                        // 但是表格標題是：ID, 姓名, 訂票資訊 (新格式), 狀態, 訊息, 提交時間, 更新時間, 操作 (共 8 欄)
-                        // 而您的 JS 程式碼插入了 7 個儲存格（不含操作），且順序是：
-                        // ID, 姓名, 訂票結果/進度 (task.message), 狀態, 起訖站點 (新格式), 更新時間
-                        
-                        // **我們將欄位與您提供的 HTML 保持一致：**
-                        // ID -> task.id (OK)
-                        // 姓名 -> task.passenger_name (OK)
-                        // 訂票資訊 (新格式) -> ${start_station} → ${end_station}, ${travel_date} ${train_time}
-                        // 狀態 -> statusLabel (OK)
-                        // 訊息 -> task.message (OK)
-                        // 提交時間 -> N/A (此欄位在 JS 裡被移除了，所以我們將其補回，但因為 API 沒給 submit_time，所以用 N/A)
-                        // 更新時間 -> task.update_time (OK)
-                        // 操作 -> Button (OK)
-
-
                         // 3. 訂票資訊 (新格式) - 站點與時間
+                        // 這裡使用新的 travel_date 格式: MM/DD
                         row.insertCell().textContent = `${start_station} → ${end_station} (${travel_date} ${train_time})`;
-                        
+
                         // 4. 狀態
                         const statusCell = row.insertCell();
                         statusCell.innerHTML = `<span class="${statusClass}">${statusLabel}</span>`;
@@ -444,8 +347,8 @@
                         
                         // 6. 提交時間 (API 未提供，假設從 train_info 解析)
                         // 由於 API 提供的資料 task 裡沒有 submit_time，這裡暫時使用 —
-                        // row.insertCell().textContent = task.submit_time ? task.submit_time.split(' ')[1] : '—'; 
-                        row.insertCell().textContent = 'TBD'; // 假設後端沒有提供
+                        row.insertCell().textContent = task.submit_time ? task.submit_time.split(' ')[1] : '—'; 
+                        // row.insertCell().textContent = 'TBD'; // 假設後端沒有提供
 
                         // 7. 更新時間 (僅顯示時間部分)
                         row.insertCell().textContent = task.update_time ? task.update_time.split(' ')[1] : '—';

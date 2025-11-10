@@ -48,10 +48,40 @@ def save_json(filename, data):
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
-def get_new_passenger_id():
+def get_new_passenger_id_old():
     # 假設的 ID 生成器
     return int(time.time() * 1000)
 
+def get_new_passenger_id_new():
+    """
+    生成一個基於當前時間戳的 8 位數字 ID。
+    """
+    # 1. 獲取毫秒級時間戳 (例如: 1731159670123)
+    long_id = int(time.time() * 1000)
+    
+    # 2. 轉換為字串 (例如: "1731159670123")
+    id_str = str(long_id)
+    
+    # 3. 截取後 8 位數字 (例如: "9670123")
+    # Python 負數索引 [-8:] 表示從倒數第 8 個字元開始到字串結束
+    short_id_str = id_str[-8:]
+    
+    # 4. 轉回整數並返回 (例如: 9670123)
+    return int(short_id_str)
+
+def get_new_passenger_id():
+    # 假設的 ID 生成器：取得當前毫秒級時間戳
+    # 例如：1731159842567.89 -> 1731159842568
+    # 1. 取得毫秒級時間戳並轉換為整數
+    full_timestamp = int(time.time() * 1000)
+    
+    # 2. 只取後面 8 碼 (對 100,000,000 取模)
+    # 例如：1731159842568 % 100000000 = 59842568 (共 8 位)
+    short_id = full_timestamp % 100000000
+    
+    # 3. 轉換為字串並用 '0' 補齊至 8 碼，確保長度一致
+    # 例如：如果 ID 是 9842568，則會補齊為 09842568
+    return str(short_id).zfill(8)
 
 def load_tasks():
     """
@@ -151,106 +181,6 @@ def load_tasks():
         return retained_tasks
 
 
-def load_tasks_old():
-    """
-    載入任務列表，並清除和歸檔過期的已完成任務。
-    - 成功訂單: 保留 2 天
-    - 失敗/取消訂單: 保留 60 分鐘 (1 小時)
-    """    
-    global booking_tasks
-    
-    with data_lock:
-        booking_tasks = load_json(TASKS_FILE)
-        
-        FINAL_STATUSES = ['success', 'failed', 'cancelled']     # scott: add deleted or aborted 放棄
-        retained_tasks = []
-        archived_tasks = []
-        now_cst = datetime.now(CST_TIMEZONE)
-        
-        expired_count = 0
-        
-        for task in booking_tasks:
-            task_status = task.get('status')
-            
-            if task_status not in FINAL_STATUSES:
-                # 任務正在進行中 (pending 或 running)，直接保留
-                retained_tasks.append(task)
-                continue
-            
-            # --- 處理已完成任務的過期邏輯 ---
-            finish_time_str = task.get('finish_time')
-            if not finish_time_str:
-                # 如果沒有完成時間，表示資料有問題，為安全起見保留
-                retained_tasks.append(task)
-                continue
-                
-            try:
-                finish_datetime = datetime.strptime(finish_time_str, '%Y/%m/%d %H:%M:%S').replace(tzinfo=CST_TIMEZONE)
-                is_expired = False
-                
-                if task_status == 'success':
-                    # 成功訂單：保留 2 天 (即在 3 天前的 00:00:00 之後的訂單)
-                    cutoff_date = (now_cst - timedelta(days=2)).date()
-                    if finish_datetime.date() < cutoff_date:
-                        is_expired = True
-                        
-                else: # failed 或 cancelled
-                    # 失敗或取消訂單：保留 60 分鐘
-                    cutoff_datetime = now_cst - timedelta(minutes=60)
-                    if finish_datetime < cutoff_datetime:
-                        is_expired = True
-                        
-            except Exception as e:
-                # 日期解析錯誤，保留任務
-                print(f"Warning: Failed to parse finish_time for task {task.get('task_id', 'N/A')}: {e}")
-                retained_tasks.append(task)
-                continue
-                
-            
-            if is_expired:
-                # 任務過期：準備歸檔
-                expired_count += 1
-                archived_tasks.append(task)
-            else:
-                # 任務未過期：保留在 tasks 列表中以供 /api/status 顯示
-                retained_tasks.append(task)
-
-
-        # 3. 執行歸檔操作
-        if expired_count > 0:
-            print(f"Archiving {expired_count} expired completed tasks from tasks.json.")
-            
-            # A. 更新 tasks.json (只保留未過期的)
-            booking_tasks = retained_tasks
-            save_json(TASKS_FILE, booking_tasks) 
-
-            # B. 寫入 history.json (歸檔過期任務)
-            history_list = load_json(HISTORY_FILE)
-            for task in archived_tasks:
-                # 轉換為 history 格式
-                history_entry = {
-                    'task_id': task['task_id'],
-                    'result': task['status'],
-                    'code': task.get('booking_code', 'N/A'),
-                    'submit_time': task['submit_time'],
-                    'finish_time': task['finish_time'],
-                    'message': task['message'],
-                    'data': task['data'], 
-                    'name': task['data'].get('name', 'N/A'),
-                    'personal_id': task['data'].get('personal_id', 'N/A'),
-                    'train_no': task['data'].get('train_no', 'N/A'),
-                    'travel_date': task['data'].get('travel_date', 'N/A'),
-                    'start_station': task['data'].get('start_station', 'N/A'),
-                    'end_station': task['data'].get('end_station', 'N/A'),
-                }
-                history_list.append(history_entry)
-            
-            save_json(HISTORY_FILE, history_list) 
-            
-        # 4. 返回給 /api/status 的數據 (僅包含未過期的所有任務)
-        return retained_tasks
-
-
 # app.py: 修正 load_history 函式
 
 def load_history():
@@ -324,135 +254,6 @@ def load_history():
         return retained_history
 
 
-# 修正 load_history 函式 (確保與 load_tasks 分工)
-
-def load_history_old2():
-    """
-    載入歷史紀錄 (history.json)，並清理超過 365 天的紀錄。
-    用於 history.html 頁面的長期查詢。
-    """
-    
-    # 確保鎖定共享資源
-    with data_lock:
-        history_list = load_json(HISTORY_FILE)
-        
-        now_cst = datetime.now(CST_TIMEZONE)
-        
-        # 設置保留天數為 365 天 (一年)
-        retention_days = 365 
-        
-        # 計算截止日期：今天日期往前推 365 天的 00:00:00
-        cutoff_date = (now_cst - timedelta(days=retention_days)).date()
-
-        retained_history = []
-        expired_count = 0
-        
-        for h in history_list:
-            finish_time_str = h.get('finish_time')
-            
-            try:
-                # 解析任務完成時間
-                finish_datetime = datetime.strptime(finish_time_str, '%Y/%m/%d %H:%M:%S').replace(tzinfo=CST_TIMEZONE)
-                
-                # 檢查：如果完成日期早於截止日期，則視為過期
-                if finish_datetime.date() < cutoff_date:
-                    expired_count += 1
-                else:
-                    # --- 格式化數據供 history.html 顯示 ---
-                    
-                    # 格式化完成時間
-                    h['formatted_finish_time'] = finish_datetime.strftime('%Y/%m/%d %H:%M:%S')
-                    
-                    # 格式化出發/到達資訊
-                    h['from_info'] = f"{h.get('start_station', 'N/A')}"
-                    h['to_info'] = f"{h.get('end_station', 'N/A')}"
-                    
-                    # 格式化其他欄位
-                    h['formatted_travel_date'] = h['data'].get('travel_date', 'N/A')
-                    h['result'] = {'success': '成功', 'failed': '失敗', 'cancelled': '已取消'}.get(h['result'], h['result'])
-                    
-                    retained_history.append(h)
-                    
-            except Exception as e:
-                # 如果日期解析失敗 (例如 finish_time 欄位缺失或格式錯誤)，則保留紀錄
-                print(f"Warning: Failed to parse history date for task {h.get('task_id', 'N/A')}. Retaining. Error: {e}")
-                retained_history.append(h)
-                
-        
-        # 如果有紀錄被刪除，則將清理後的列表寫回 history.json
-        if expired_count > 0:
-            print(f"Cleaned up {expired_count} expired history entries (older than {retention_days} days).")
-            # 準備寫入檔案的列表 (移除格式化欄位以減小檔案大小)
-            history_to_save = [{k: v for k, v in h.items() if not k.startswith('formatted_') and k not in ['from_info', 'to_info']} for h in retained_history]
-            save_json(HISTORY_FILE, history_to_save)
-        
-        # 返回要顯示在 history.html 上的列表
-        return retained_history
-
-
-def load_history_old():
-    """
-    載入歷史紀錄並刪除超過 2 天的紀錄。
-    """
-    # 確保鎖定
-    with data_lock:
-        history_list = load_json(HISTORY_FILE)
-        
-        # 1. 設置截止時間 (Current Date - 2 Days)
-        # 這裡我們使用任務完成時間 (finish_time) 來判斷是否過期
-        
-        # 今天 00:00:00 的時間戳
-        now_cst = datetime.now(CST_TIMEZONE)
-        
-        # 過期截止日期的 00:00:00
-        # 如果要保留 2 天，則截止時間是 3 天前的 00:00:00
-        # 範例: 今天是 10/3 23:00，截止日期是 10/1 00:00:00。10/1 的訂單將被刪除。
-        # 為了保留完整 2 天，我們設定截止時間為 (今天日期 - 2 天)
-        
-        retention_days = 2
-        cutoff_date = (now_cst - timedelta(days=retention_days)).date() # 只需要日期部分
-
-        # 2. 過濾並移除過期紀錄
-        retained_history = []
-        expired_count = 0
-        
-        for h in history_list:
-            finish_time_str = h.get('finish_time') # 使用 'finish_time' 判斷
-            
-            try:
-                # 解析完成時間的日期
-                # 格式應為 '%Y/%m/%d %H:%M:%S'
-                finish_datetime = datetime.strptime(finish_time_str, '%Y/%m/%d %H:%M:%S').replace(tzinfo=CST_TIMEZONE)
-                
-                # 檢查是否過期 (如果 finish_datetime 的日期早於 cutoff_date，則視為過期)
-                if finish_datetime.date() < cutoff_date:
-                    expired_count += 1
-                else:
-                    # 格式化顯示所需欄位
-                    h['formatted_finish_time'] = finish_datetime.strftime('%Y/%m/%d %H:%M:%S')
-                    h['from_info'] = f"{h.get('start_station', 'N/A')} {h['data'].get('start_time', '')}"
-                    h['to_info'] = f"{h.get('end_station', 'N/A')} {h['data'].get('end_time', '')}"
-                    h['formatted_travel_date'] = h['data'].get('travel_date', 'N/A')
-                    h['result'] = {'success': '成功', 'failed': '失敗', 'cancelled': '已取消'}.get(h['result'], h['result'])
-                    retained_history.append(h)
-                    
-            except Exception as e:
-                # 處理日期解析錯誤的歷史紀錄 (保留)
-                print(f"Warning: Failed to parse history date for task {h.get('task_id', 'N/A')}: {e}")
-                retained_history.append(h)
-                
-        
-        # 3. 如果有紀錄被刪除，則儲存新的 history.json
-        if expired_count > 0:
-            print(f"Cleaned up {expired_count} expired history entries (older than {retention_days} days).")
-            # 只保留歷史紀錄的核心數據，刪除格式化欄位以減小檔案大小
-            history_to_save = [{k: v for k, v in h.items() if not k.startswith('formatted_') and k not in ['from_info', 'to_info']} for h in retained_history]
-            save_json(HISTORY_FILE, history_to_save)
-        
-        # 返回要顯示在 history.html 上的列表
-        return retained_history
-
-
 # --- 核心配置與全局狀態 ---
 # 使用 timedelta 支援 Python 3.8
 CST_TIMEZONE = timezone(timedelta(hours=8))
@@ -494,8 +295,8 @@ def get_new_task_id() -> str:
     with data_lock:
         task_id = str(next_task_id)
         next_task_id += 1
-        # 使用時間戳 + id 確保唯一性
-        return datetime.now(CST_TIMEZONE).strftime('%Y%m%d%H%M%S') + '-' + task_id
+        return datetime.now(CST_TIMEZONE).strftime('%Y%m%d') + '-' + task_id
+        # return datetime.now(CST_TIMEZONE).strftime('%Y%m%d%H%M%S') + '-' + task_id  # 使用時間戳 + id 確保唯一性
 
 def get_task_by_id(task_id: str) -> Optional[Dict[str, Any]]:
     # 注意：此函式預期在 data_lock 內被呼叫，或僅用於讀取
@@ -1072,27 +873,6 @@ def passenger_page():
 # ----------------------------------------------------------------------
 
 
-# @app.route("/passenger.html", methods=["GET", "POST"])
-# def passenger_page():
-#     if request.method == "POST":
-#         data = request.form
-#         passenger = {
-#             "id": get_new_passenger_id(),
-#             "name": data.get("name"),
-#             "personal_id": data.get("personal_id"),
-#             "phone_num": data.get("phone_num"),
-#             "email": data.get("email"),
-#             "identity": data.get("identity")
-#         }
-#         passengers = load_json(PASSENGER_FILE)
-#         passengers.append(passenger)
-#         save_json(PASSENGER_FILE, passengers)
-#         # 新增成功後重定向或返回 passenger.html
-#         passengers = load_json(PASSENGER_FILE) # 重新載入以顯示最新的列表
-#         return render_template("passenger.html", passengers=passengers, success=True)
-        
-#     passengers = load_json(PASSENGER_FILE)
-#     return render_template("passenger.html", passengers=passengers)
 
 
 @app.route("/history.html")
