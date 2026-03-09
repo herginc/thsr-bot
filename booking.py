@@ -96,7 +96,8 @@ def thsr_run_booking_flow_with_data(
     # --- 實際的 thsr 訂票流程 ---
     try:
         if cancel_event.is_set():
-            raise Exception("任務開始前已被取消。")
+            # raise Exception("任務開始前已被取消。")
+            raise Exception("取消排隊中任務")
 
         # 1. 初始化 Session
         session = session_init()
@@ -108,7 +109,8 @@ def thsr_run_booking_flow_with_data(
         for step in range(1, total_steps + 1):
             
             if cancel_event.is_set():
-                raise Exception("任務運行中被使用者取消。")
+                # raise Exception("任務運行中被使用者取消。")
+                raise Exception("取消運行中任務")
 
             # 在這裡模擬長時間延遲
             step_delay = random.uniform(MIN_STEP_DELAY, MAX_STEP_DELAY)
@@ -129,9 +131,9 @@ def thsr_run_booking_flow_with_data(
                 if random.random() > 0.3: # 模擬 70% 成功率
                     booking_success = True
                     code = ''.join(random.choices('ABCDEFGHJKLMNPQRSTUVWXYZ123456789', k=6)) 
-                    result_message = f"訂票成功！訂位代號: {code}"
+                    result_message = f"訂位代號: {code}"  # 訂票成功
                 else:
-                    result_message = "訂票失敗。列車滿座或系統錯誤。"
+                    result_message = "列車滿座或系統錯誤。" # 訂票失敗
             else:
                 result_message = f"模擬網路請求及資料處理..."
 
@@ -163,7 +165,7 @@ def thsr_run_booking_flow_with_data(
     finally:
         t1 = time.perf_counter() - t0
         # 輸出處理時間 (單位: 秒)
-        logger.info(f"Task {task_id} finished. Total run time = {t1:.2f}s. Success: {booking_success}")
+        logger.info(f"{YELLOW}Task {task_id} finished. Total run time = {t1:.2f}s. booking_success: {booking_success}{RESET}")
 
 
 # ----------------------------------------------------------------------------

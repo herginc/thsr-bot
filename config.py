@@ -122,7 +122,7 @@ ajax_http_headers: dict = {
 # ----------------------------------------------------------------------------
 
 # Enable or disable proxy server
-PROXY_ENABLE = 0
+PROXY_ENABLE_DEFAULT_SETTING = 0
 
 # PROXY = "http://60.249.94.59:3128"
 # PROXY = "http://202.29.215.78:8080"   # 101056 ms
@@ -141,11 +141,15 @@ if _env_proxy_enable is not None:
         PROXY_ENABLE = int(_env_proxy_enable)
     except ValueError:
         PROXY_ENABLE = 1 if _env_proxy_enable.lower() in ("1", "true", "yes", "on") else 0
+else:
+    PROXY_ENABLE = PROXY_ENABLE_DEFAULT_SETTING
 
 # _env_proxy_server = os.getenv("PROXY_SERVER")
 _env_proxy_server = os.environ.get("PROXY_SERVER")
 if _env_proxy_server:
     PROXY_SERVER = _env_proxy_server
+else:
+    PROXY_ENABLE = 0  # no valid proxy server
 
 if (PROXY_ENABLE):
     print(f"PROXY_ENABLE = {PROXY_ENABLE}")

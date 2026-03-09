@@ -1032,7 +1032,7 @@ def thsr_load_booking_page(session: Session) -> str:
             page = response.text   # or response.text ??
             logger.info(CYAN + f"Get booking page from {BOOKING_PAGE_URL}" + RESET)
             if (SAVE_BOOKING_PAGE):
-                filename = "booking_page.html"
+                filename = "booking_1st_page.html"
                 with open(filename, "w", encoding="utf-8") as file:
                     # file.write(response.text)
                     file.write(page)

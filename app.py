@@ -20,6 +20,13 @@ from flask import Flask, request, abort, render_template, jsonify, redirect
 
 import booking
 import re
+from config import *
+import logging
+
+logger = logging.getLogger(__name__)
+# 配置 logger 格式
+FORMAT = '[%(asctime)s][%(levelname)s][%(funcName)s]: %(message)s'
+logging.basicConfig(level=logging.INFO, format=FORMAT)
 
 # --- 檔案名稱配置 ---
 PASSENGER_FILE  = 'passenger.json'
@@ -48,27 +55,6 @@ def save_json(filename, data):
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
-def get_new_passenger_id_old():
-    # 假設的 ID 生成器
-    return int(time.time() * 1000)
-
-def get_new_passenger_id_new():
-    """
-    生成一個基於當前時間戳的 8 位數字 ID。
-    """
-    # 1. 獲取毫秒級時間戳 (例如: 1731159670123)
-    long_id = int(time.time() * 1000)
-    
-    # 2. 轉換為字串 (例如: "1731159670123")
-    id_str = str(long_id)
-    
-    # 3. 截取後 8 位數字 (例如: "9670123")
-    # Python 負數索引 [-8:] 表示從倒數第 8 個字元開始到字串結束
-    short_id_str = id_str[-8:]
-    
-    # 4. 轉回整數並返回 (例如: 9670123)
-    return int(short_id_str)
-
 def get_new_passenger_id():
     # 假設的 ID 生成器：取得當前毫秒級時間戳
     # 例如：1731159842567.89 -> 1731159842568
@@ -83,15 +69,33 @@ def get_new_passenger_id():
     # 例如：如果 ID 是 9842568，則會補齊為 09842568
     return str(short_id).zfill(8)
 
+# ----------------------------------------------------------------------------
+# 從TASKS_FILE載入任務, 格式化訂票資訊以符合訂票任務狀態表格格式, 並整理過期的任務.
+# 將已過期任務拿掉後, 再回存到TASKS_FILE, 並 return 這些任務 ('未完成'及'已完成但
+# 未過期' 任務)
+# ----------------------------------------------------------------------------
 def load_tasks():
     """
     載入任務列表，並清除tasks.json中過期的已完成任務。
     同時將訂票資訊格式化為 '左營 - 台南 (11-19 23:45)'
     """
     global booking_tasks
-    
+
     with data_lock:
-        booking_tasks = load_json(TASKS_FILE)
+
+        # # 從檔案載入任務
+        # tasks = load_json(TASKS_FILE) # [cite: 141]
+        
+        # # 依照建立時間 (timestamp) 降冪排序，確保最新提交的在最上面
+        # # 如果任務物件中有 'created_at' 或 'timestamp' 欄位：
+        # tasks.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
+        
+        # # 或者簡單地將列表反轉（如果新任務是 append 在最後面）
+        # # tasks.reverse() 
+        
+        # booking_tasks = tasks
+        
+        booking_tasks = load_json(TASKS_FILE) # 由以上代碼取代
         
         FINAL_STATUSES = ['success', 'failed', 'cancelled']
         retained_tasks = []
@@ -130,33 +134,37 @@ def load_tasks():
                 pass 
                 
             # 建立新的格式：'左營 - 台南 (11-19 23:45)'
+            # [scott@2026-03-08] 動態產生'formatted_route'欄位, TASKS_FILE 不需特別存此欄位.
             task['formatted_route'] = f"{start_station} - {end_station} ({formatted_date} {train_time})"
             # --- END: 格式化訂票資訊 ---
-
             
             if task_status not in FINAL_STATUSES:
                 # 任務正在進行中 (pending 或 running)，直接保留
                 retained_tasks.append(task)
                 continue
-            
+
+            # [scott@2026-03-08] 以下code都是在處理已完成任務 (FINAL_STATUSES)
+
             # --- 處理已完成任務的過期邏輯 (保持不變) ---
             finish_time_str = task.get('finish_time')
             # ... (省略過期檢查的 if/else 邏輯) ...
             
+            # [scott@2026-03-08] 'finish_time_str'沒有值的已完成任務, 也要放進 retained_tasks (??), 有可能發生嗎?
             if not finish_time_str:
                 retained_tasks.append(task)
+                print(f"***** 'finish_time_str'沒有值的已完成任務, 也要放進 retained_tasks --> 真的發生了 *****")
                 continue
                 
             try:
                 finish_datetime = datetime.strptime(finish_time_str, '%Y/%m/%d %H:%M:%S').replace(tzinfo=CST_TIMEZONE)
                 is_expired = False
-                
-                if task_status == 'success':
+
+                if task_status == 'success':    # 成功 2 天後移除
                     cutoff_date = (now_cst - timedelta(days=2)).date()
-                    if finish_datetime.date() < cutoff_date:
+                    if finish_datetime.date() <= cutoff_date:
                         is_expired = True
                         
-                else: 
+                else:   # 失敗/取消 60 分鐘後移除
                     cutoff_datetime = now_cst - timedelta(minutes=60)
                     if finish_datetime < cutoff_datetime:
                         is_expired = True
@@ -263,7 +271,8 @@ data_lock = threading.RLock()
 # --- 全局狀態新增 ---
 booking_thread: Optional[threading.Thread] = None
 current_running_task_id: Optional[str] = None
-# 載入上次的任務，並將所有 'running' 狀態重設為 'failed' 或 'pending'
+
+# 載入上次的任務，並將所有 'running' 或 'cancelling' 狀態重設為 'failed'
 booking_tasks: List[Dict[str, Any]] = load_json(TASKS_FILE) 
 for task in booking_tasks:
     if task['status'] == 'running' or task['status'] == 'cancelling':
@@ -306,15 +315,15 @@ def get_task_by_id(task_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-# app.py: 修正 update_task_status 函式 (確保 history.json 數據最完整)
-
+# ----------------------------------------------------------------------------
+# 根據task_id更新任務狀態並記錄更新時間。
+# 如果任務完成 (success/failed/cancelled)，則立即將其歸檔到 history.json (完整數據)。
+# ----------------------------------------------------------------------------
 def update_task_status(task_id: str, new_status: str, message: str):
-    """
-    更新任務狀態並記錄更新時間。
-    如果任務完成 (success/failed/cancelled)，則立即將其歸檔到 history.json (完整數據)。
-    """
     global booking_tasks
-    
+
+    logger.info(".........")
+
     with data_lock:
         task = get_task_by_id(task_id)
         if task is None:
@@ -342,7 +351,7 @@ def update_task_status(task_id: str, new_status: str, message: str):
             history_entry['code'] = task.get('booking_code', 'N/A')
             history_entry['finish_time'] = task['finish_time']
             
-            # 移除前端格式化欄位 (如果存在)
+            # 移除前端格式化欄位 (如果存在), HISTORY_FILE 不需存此欄位
             history_entry.pop('formatted_route', None) 
 
             # *** 檢查是否已存在，避免重複歸檔 ***
@@ -357,147 +366,6 @@ def update_task_status(task_id: str, new_status: str, message: str):
             print(f"Task {task_id} completed ({new_status}). Archived to history.json immediately.")
             
         save_json(TASKS_FILE, booking_tasks)
-
-
-def update_task_status_old3(task_id: str, new_status: str, message: str):
-    """
-    更新任務狀態並記錄更新時間。
-    如果任務完成 (success/failed/cancelled)，則立即將其歸檔到 history.json。
-    """
-    global booking_tasks
-    
-    with data_lock:
-        task = get_task_by_id(task_id)
-        if task is None:
-            # 任務已經被清理或不存在
-            return
-
-        task['status'] = new_status
-        task['message'] = message
-        task['update_time'] = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
-
-        FINAL_STATUSES = ['success', 'failed', 'cancelled']
-        if new_status in FINAL_STATUSES:
-            # 1. 更新任務完成時間
-            task['finish_time'] = task['update_time'] 
-            
-            # 2. 立即歸檔到 history.json (修正歷史紀錄不顯示的問題)
-            history_list = load_json(HISTORY_FILE)
-            history_entry = {
-                'task_id': task['task_id'],
-                'result': new_status, 
-                'code': task.get('booking_code', 'N/A'), 
-                'submit_time': task['submit_time'],
-                'finish_time': task['finish_time'], 
-                'message': task['message'],
-                'data': task['data'], 
-                'name': task['data'].get('name', 'N/A'),
-                'personal_id': task['data'].get('personal_id', 'N/A'),
-                'train_no': task['data'].get('train_no', 'N/A'), 
-                'travel_date': task['data'].get('travel_date', 'N/A'),
-                'start_station': task['data'].get('start_station', 'N/A'),
-                'end_station': task['data'].get('end_station', 'N/A'),
-            }
-            history_list.append(history_entry)
-            save_json(HISTORY_FILE, history_list) 
-            
-            print(f"Task {task_id} completed ({new_status}). Archived to history.json immediately.")
-            
-        # 3. 儲存更新後的 tasks.json (讓 load_tasks 處理 index.html 的短期保留)
-        save_json(TASKS_FILE, booking_tasks)
-
-
-def update_task_status_old2(task_id: str, new_status: str, message: str):
-    """
-    更新任務狀態並記錄更新時間。
-    任務完成後 (success/failed/cancelled)，不會立即移除，留待 load_tasks 處理。
-    """
-    global booking_tasks
-    
-    with data_lock:
-        task = get_task_by_id(task_id)
-        if task is None:
-            # 任務已經被清理或不存在
-            return
-
-        task['status'] = new_status
-        task['message'] = message
-        task['update_time'] = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
-
-        FINAL_STATUSES = ['success', 'failed', 'cancelled']
-        if new_status in FINAL_STATUSES:
-            # 這是任務完成的實際時間
-            task['finish_time'] = task['update_time'] 
-            
-            # 如果成功，且 booking_code 尚未設定，則嘗試解析並設定
-            if new_status == 'success' and 'booking_code' in task and '訂位代號:' in message:
-                 # 這裡假設 run_booking_worker 已經將 booking_code 寫入 task
-                 pass
-
-            print(f"Task {task_id} completed ({new_status}). Sticking in tasks list for now.")
-
-        # 儲存更新後的 tasks.json (無論狀態是否改變)
-        save_json(TASKS_FILE, booking_tasks)
-
-
-def update_task_status_old(task_id: str, new_status: str, message: str):
-    """
-    更新任務狀態並記錄更新時間。
-    如果任務完成 (success/failed/cancelled)，則將其從 task 列表移至 history。
-    """
-    global booking_tasks
-    
-    # 確保鎖定 (data_lock 在 app.py 頂部已定義為 threading.RLock())
-    with data_lock:
-        
-        # 1. 更新 tasks 列表
-        task = get_task_by_id(task_id)
-        if task is None:
-            print(f"Warning: Task {task_id} not found for status update.")
-            return
-
-        task['status'] = new_status
-        task['message'] = message
-        task['update_time'] = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
-
-        # 2. 如果任務已完成，則將其移至 history
-        FINAL_STATUSES = ['success', 'failed', 'cancelled']
-        if new_status in FINAL_STATUSES:
-            
-            # 從 booking_tasks 移除
-            booking_tasks = [t for t in booking_tasks if t['task_id'] != task_id]
-            save_json(TASKS_FILE, booking_tasks) # 儲存更新後的 tasks.json
-
-            # 寫入 history 列表
-            history_list = load_json(HISTORY_FILE)
-            
-            # 確保歷史紀錄包含所有必要欄位（特別是訂票結果 result 和完成時間）
-            # 這裡我們使用 'submit_time' 作為完成時間的日期基礎，但最好是新增一個 'finish_time'
-            
-            # 準備 history 格式
-            history_entry = {
-                # 歷史記錄所需的基礎欄位
-                'task_id': task['task_id'],
-                'result': new_status, # success, failed, cancelled
-                'code': task.get('booking_code', 'N/A'), # 如果成功，這裡應該有訂位代號
-                'submit_time': task['submit_time'],
-                'finish_time': task['update_time'], # 任務完成的實際時間
-                'message': task['message'],
-                
-                # 訂票資訊 (從 task['data'] 中取出)
-                'data': task['data'], 
-                'name': task['data'].get('name', 'N/A'),
-                'personal_id': task['data'].get('personal_id', 'N/A'),
-                'train_no': task['data'].get('train_no', 'N/A'), # 如果訂票成功，這裡可能需要更新
-                'travel_date': task['data'].get('travel_date', 'N/A'),
-                'start_station': task['data'].get('start_station', 'N/A'),
-                'end_station': task['data'].get('end_station', 'N/A'),
-            }
-            
-            history_list.append(history_entry)
-            save_json(HISTORY_FILE, history_list) # 儲存更新後的 history.json
-            
-            print(f"Task {task_id} completed ({new_status}). Moved to history.")
 
 
 # ----------------------------------------------------------------------------
@@ -587,7 +455,11 @@ def run_booking_worker():
 
 # app.py: 新增 /api/passenger 路由
 
+# 關於「即使Name是唯一的，為何仍需要 ID」的說明：
+# 資料獨立性（decoupling）：內部 ID 通常是系統自動分配的、不可變的數字（例如 1, 2, 3...）。如果未來乘客的姓名因故需要更改（例如：改名），由於系統依靠這個不變的內部 ID 來追蹤該乘客所有的歷史紀錄和任務，您只需要更新乘客資料中的 name 欄位，而無需更新所有歷史訂票紀錄。
+# 安全層級分離： 為了遵守「Front-End 不使用 personal_id」的安全原則，我們將使用這個非敏感的內部 ID (id) 作為前端下拉選單與後端 API 溝通的橋樑，而不是使用敏感的姓名或身份證字號。
 @app.route('/api/passenger', methods=['GET'])
+@app.route('/api/get_passengers', methods=['GET'])
 def api_passenger():
     """
     提供 JSON 格式的乘客列表給前端 index.html，僅包含不敏感的 id 和 name。
@@ -602,7 +474,7 @@ def api_passenger():
             # 僅在 'id' 和 'name' 欄位都存在時才傳輸
             if p.get('id') is not None and p.get('name') is not None:
                 safe_passengers.append({
-                    'id': p.get('id'),         # 不敏感的 ID 作為下拉選單的 value
+                    'id': p.get('id'),        # 不敏感的 ID 作為下拉選單的 value
                     'name': p.get('name')     # 姓名作為顯示文本
                 })
             
@@ -612,7 +484,11 @@ def api_passenger():
 # ============================================================================
 # app.py 修正: /api/submit 路由 (確保異常處理)
 # ============================================================================
+# ----------------------------------------------------------------------------
+# 路由修改 (Req 4: 提交訂票)
+# ----------------------------------------------------------------------------
 @app.route("/api/submit", methods=["POST"])
+@app.route("/api/submit_task", methods=["POST"])
 def submit_booking():
     # 確保所有邏輯都在 try 區塊內，防止未預期的崩潰
     try:
@@ -687,46 +563,18 @@ def submit_booking():
 
 
 # ----------------------------------------------------------------------------
-# 路由修改 (Req 4: 提交訂票)
-# ----------------------------------------------------------------------------
-@app.route("/api/submit_NG", methods=["POST"])
-def submit_booking_NG():
-
-    try:
-        data = request.json
-        if not data:
-            abort(400, "Invalid JSON data")
-
-        task_id = get_new_task_id()
-        current_time_cst = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
-
-        new_task = {
-            'task_id': task_id,
-            'status': 'pending',
-            'submit_time': current_time_cst,
-            'update_time': current_time_cst,
-            'message': '等待執行...',
-            'data': data
-        }
-
-        with data_lock:
-            booking_tasks.append(new_task)
-            save_json(TASKS_FILE, booking_tasks)
-            
-        return jsonify({"status": "success", "message": "訂票任務已加入隊列", "task_id": task_id}), 200
-
-    except Exception as e:
-        # logger.error(f"Submit error: {e}")
-        return jsonify({"status": "error", "message": f"提交失敗: {e}"}), 500
-
-# ----------------------------------------------------------------------------
 # 路由新增 (Req 3: 動態查詢狀態)
 # ----------------------------------------------------------------------------
 @app.route("/api/status", methods=["GET"])
+@app.route("/api/get_tasks", methods=["GET"])
 def get_booking_status():
     with data_lock:
-        tasks = list(booking_tasks) 
-        
+        tasks = list(booking_tasks)
+
+
+    # 每次前端請求狀態時，同時執行任務清理邏輯
+    # tasks = load_tasks()
+
     status_list = []
     for task in tasks:
         # 確保 task['data'] 中有必要的鍵
@@ -744,17 +592,22 @@ def get_booking_status():
     worker_status = 'running' if booking_thread and booking_thread.is_alive() and current_running_task_id else 'idle'
     if worker_status == 'running':
         worker_status += f" (Task ID: {current_running_task_id})"
-        
+
+    # print(YELLOW + f"status_list len = {len(status_list)}" + RESET)
+    # print(status_list)
+
     return jsonify({
         "status": "success",
         "worker_status": worker_status,
         "tasks": status_list
     }), 200
 
+
 # ----------------------------------------------------------------------------
 # 路由新增 (Req 2: 刪除/取消訂票)
 # ----------------------------------------------------------------------------
 @app.route("/api/cancel/<string:task_id>", methods=["POST"])
+@app.route("/api/cancel_task/<string:task_id>", methods=["POST"])
 def cancel_booking(task_id):
     global current_running_task_id
     global current_cancel_event
@@ -806,17 +659,6 @@ def index_page():
     # 3. 如果有乘客資料，則正常渲染首頁
     # 這裡傳遞 passengers 變數到模板，以確保模板中的任何依賴能正常運作
     return render_template("index.html", passengers=passengers)
-
-
-# @app.route("/")
-# def index_page():
-#     # 確保 passengers 數據能正確傳遞
-#     passengers = load_json(PASSENGER_FILE)
-#     if not passengers:
-#         # 添加一個預設選項
-#         passengers = [{"id": "", "name": "請先新增乘客個人資料"}] 
-        
-#     return render_template("index.html", passengers=passengers)
 
 
 # app.py: 修正 passenger_page 函式，強制姓名唯一性
@@ -871,7 +713,6 @@ def passenger_page():
 # ----------------------------------------------------------------------
 # 注意：若您的 passenger.html 中沒有處理 error 參數，需要微幅修改 passenger.html
 # ----------------------------------------------------------------------
-
 
 
 

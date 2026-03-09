@@ -1,120 +1,252 @@
-<!DOCTYPE html>
+<!DOonCTYPE html>
 <html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
     <title>高鐵訂票系統</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        /* (CSS 樣式保持不變) */
         body { font-family: "Noto Sans TC", Arial, sans-serif; background: #f7f7fa; margin: 0; padding: 0; }
         header { background: #1565c0; color: #fff; padding: 1.5rem 0; text-align: center; letter-spacing: 0.1em; font-size: 2rem; margin-bottom: 2rem; box-shadow: 0 2px 8px #ccc; }
-        .container { max-width: 900px; margin: 0 auto; background: #fff; border-radius: 10px; box-shadow: 0 2px 12px #ddd; padding: 2rem 2.5rem 2.5rem 2.5rem; }
-        h2, h3 { color: #1565c0; margin-top: 0; }
-        form { display: flex; flex-wrap: wrap; gap: 1.2rem 2rem; margin-bottom: 2rem; align-items: flex-end; }
-        form label { display: flex; flex-direction: column; font-weight: bold; color: #333; font-size: 1rem; flex: 1 1 180px; min-width: 120px; }
-        form input, form select { padding: 0.5rem; border: 1px solid #bbb; border-radius: 6px; margin-top: 0.3rem; }
-        form button { background: #4caf50; color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background 0.3s; }
-        form button:hover { background: #388e3c; }
-        .alert { background: #fff3cd; color: #856404; padding: 1rem; border: 1px solid #ffeeba; border-radius: 6px; margin-bottom: 1.5rem; }
-        table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; background: #fafbfc; font-size: 0.9rem; }
-        th, td { border: 1px solid #eee; padding: 0.75rem; text-align: left; }
-        th { background: #e0eaff; color: #1565c0; font-weight: bold; }
-        tr:nth-child(even) { background: #f2f6ff; }
-        .status-running, .status-cancelling { color: #ff9800; font-weight: bold; }
-        .status-pending { color: #607d8b; }
-        .status-success { color: #4caf50; font-weight: bold; }
-        .status-failed, .status-cancelled { color: #f44336; }
-        .delete-button { background: #f44336; color: white; border: none; padding: 0.3rem 0.6rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
-        .delete-button:hover { background: #d32f2f; }
+        
+        /* 容器寬度響應式 */
+        .container { max-width: 1100px; width: 95%; margin: 0 auto; background: #fff; border-radius: 10px; box-shadow: 0 2px 12px #ddd; padding: 2rem 1.5rem 2.5rem 1.5rem; }
+        
+        h2, h3 { color: #1565c0; margin-top: 0; border-bottom: 2px solid #e3f2fd; padding-bottom: 0.5rem; }
+        
+        /* 歸檔提示文字樣式 */
+        .archive-note { font-size: 0.85rem; color: #666; margin-bottom: 1rem; margin-top: -0.5rem; background: #fffde7; padding: 8px; border-left: 4px solid #fbc02d; border-radius: 4px; }
+
+        .nav-tabs { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid #ddd; overflow-x: auto; white-space: nowrap; }
+        .nav-btn { padding: 0.6rem 1rem; border: none; background: none; cursor: pointer; font-size: 1rem; color: #666; border-bottom: 3px solid transparent; }
+        .nav-btn.active { color: #1565c0; border-bottom-color: #1565c0; font-weight: bold; }
+        
+        .page { display: none; }
+        .page.active { display: block; }
+
+        /* 表單布局 */
+        form { width: 100%; }
+        .form-row { display: flex; width: 100%; gap: 1.5rem; align-items: center; margin-bottom: 1.5rem; }
+        .row-top { justify-content: space-between; border-bottom: 1px dashed #eee; padding-bottom: 1.5rem; } 
+        .row-bottom { flex-wrap: wrap; align-items: center; gap: 1rem; } 
+
+        .left-group { display: flex; gap: 1.5rem; align-items: center; }
+        .right-group { display: flex; align-items: center; }
+
+        form label { display: flex; flex-direction: column; font-weight: bold; color: #333; font-size: 0.95rem; min-width: 140px; }
+        
+        /* 水平排列標籤樣式 (電腦版) */
+        .label-horizontal { flex-direction: row !important; align-items: center; gap: 0.8rem; min-width: auto; }
+        .label-horizontal span { margin-top: 0 !important; white-space: nowrap; }
+
+        form input, form select { margin-top: 0.4rem; padding: 0.6rem; border: 1px solid #ccc; border-radius: 5px; font-size: 1rem; background-color: #fff; width: 100%; box-sizing: border-box; }
+        .label-horizontal select, .label-horizontal .radio-group { margin-top: 0; }
+
+        input:disabled, select:disabled { background-color: #e9ecef !important; cursor: not-allowed; color: #adb5bd; }
+
+        /* 按鈕樣式 */
+        .submit-btn { background: #1565c0; color: #fff; border: none; padding: 0.7rem 1.5rem; border-radius: 5px; cursor: pointer; font-size: 1rem; transition: background 0.3s; font-weight: bold; height: 45px; min-width: 120px; }
+        .submit-btn:hover { background: #0d47a1; }
+
+        .secondary-btn { background: #607d8b; color: #fff; border: none; padding: 0.6rem 1.2rem; border-radius: 5px; cursor: pointer; font-size: 0.9rem; transition: background 0.3s; height: 40px; white-space: nowrap; font-weight: bold; }
+        .secondary-btn:hover { background: #455a64; }
+
+        /* 表格響應式 - 欄位變多，增加最小寬度 */
+        .table-container { width: 100%; overflow-x: auto; margin-top: 1rem; border: 1px solid #eee; border-radius: 5px; }
+        table { width: 100%; border-collapse: collapse; background: #fff; font-size: 0.85rem; min-width: 950px; }
+        th, td { text-align: left; padding: 0.8rem; border-bottom: 1px solid #eee; vertical-align: top; }
+        th { background-color: #f1f8ff; color: #1565c0; white-space: nowrap; }
+        
+        .status-pending { color: #f57c00; font-weight: bold; }
+        .status-running { color: #1976d2; font-weight: bold; }
+        .status-success { color: #388e3c; font-weight: bold; }
+        .status-failed { color: #d32f2f; font-weight: bold; }
+        .status-cancelled { color: #9e9e9e; font-weight: bold; }
+        
+        .radio-group { display: flex; gap: 1rem; align-items: center; border: 1px solid #eee; padding: 0.4rem 0.8rem; border-radius: 5px; background: #fff; }
+        .radio-group label { flex-direction: row !important; gap: 0.4rem; cursor: pointer; font-weight: normal; min-width: auto; align-items: center; }
+        .radio-group input { margin-top: 0; width: auto; }
 
         @media (max-width: 768px) {
-            .container { padding: 1rem; }
-            form { flex-direction: column; gap: 1rem; align-items: stretch; }
-            form label { flex: none; }
-            header { padding: 1rem 0; }
-            h2 { font-size: 1.1rem; }
-            table, th, td { font-size: 0.75rem; }
+            header { font-size: 1.5rem; padding: 1rem 0; }
+            .container { padding: 1.5rem 1rem; }
+            .row-top { flex-direction: column; align-items: stretch; gap: 1rem; padding-bottom: 1rem; }
+            .left-group { flex-direction: row; justify-content: space-between; width: 100%; gap: 0.5rem; }
+            .left-group label { min-width: unset; flex: 1; }
+            .left-group .mobile-label-hide { display: none; } 
+            .left-group .secondary-btn { flex: 1; height: 40px; padding: 0 0.5rem; font-size: 0.85rem; }
+            .right-group { width: 100%; }
+            .right-group .label-horizontal { width: 100%; justify-content: space-between; }
+            .row-bottom { flex-direction: column; align-items: stretch; gap: 0.8rem; }
+            .row-bottom label { flex-direction: row !important; align-items: center; justify-content: space-between; width: 100%; min-width: unset; }
+            .row-bottom label span { flex: 0 0 80px; margin-top: 0; }
+            .row-bottom label input, .row-bottom label select { flex: 1; margin-top: 0; }
+            .submit-btn { width: 100%; height: 50px; font-size: 1.1rem; margin-top: 1rem; }
         }
     </style>
 </head>
 <body>
-    <header>高鐵訂票系統</header>
-    <div class="container">
-        <a href="/passenger.html">管理乘客個人資料 &#x2192;</a>
-        <a href="/history.html">歷史訂票資訊 &#x2192;</a>
-        
+
+<header>高鐵訂票系統</header>
+
+<div class="container">
+    <div class="nav-tabs">
+        <button class="nav-btn active" onclick="showPage('booking-page')">訂票任務</button>
+        <button class="nav-btn" onclick="showPage('passenger-page')">乘客個人資料</button>
+    </div>
+
+    <!-- 訂票任務頁面 -->
+    <div id="booking-page" class="page active">
         <h2>新增訂票任務</h2>
-        
         <form id="booking-form">
-            <label>
-                出發站
-                <select name="start_station" required>
-                    <option value="">請選擇</option>
-                    <option value="南港">南港</option>
-                    <option value="台北">台北</option>
-                    <option value="板橋">板橋</option>
-                    <option value="桃園">桃園</option>
-                    <option value="新竹">新竹</option>
-                    <option value="苗栗">苗栗</option>
-                    <option value="台中">台中</option>
-                    <option value="彰化">彰化</option>
-                    <option value="雲林">雲林</option>
-                    <option value="嘉義">嘉義</option>
-                    <option value="台南">台南</option>
-                    <option value="左營">左營</option>
-                </select>
-            </label>
-            <label>
-                到達站
-                <select name="end_station" required>
-                    <option value="">請選擇</option>
-                    <option value="南港">南港</option>
-                    <option value="台北">台北</option>
-                    <option value="板橋">板橋</option>
-                    <option value="桃園">桃園</option>
-                    <option value="新竹">新竹</option>
-                    <option value="苗栗">苗栗</option>
-                    <option value="台中">台中</option>
-                    <option value="彰化">彰化</option>
-                    <option value="雲林">雲林</option>
-                    <option value="嘉義">嘉義</option>
-                    <option value="台南">台南</option>
-                    <option value="左營">左營</option>
-                </select>
-            </label>
-            <label>
-                乘車日期
-                <input type="date" name="travel_date" required>
-            </label>
-            <label>
-                乘車時間
-                <input type="time" name="train_time" value="08:00" required>
-            </label>
-            <label>
-                車次 (選填)
-                <input name="train_no" placeholder="例如: 111">
-            </label>
-            <label>
-                乘客姓名
-                <select name="name" id="passenger-select" required>
-                    <option value="">請選擇乘客</option>
+            <div class="form-row row-top">
+                <div class="left-group">
+                    <label class="label-horizontal">
+                        <span class="mobile-label-hide">車廂種類</span>
+                        <select name="seat_class">
+                            <option value="標準車廂" selected>標準車廂</option>
+                            <option value="商務車廂">商務車廂</option>
+                        </select>
+                    </label>
+                    <label class="label-horizontal">
+                        <span class="mobile-label-hide">座位偏好</span>
+                        <select name="seat_option">
+                            <option value="無座位偏好" selected>無座位偏好</option>
+                            <option value="靠窗">靠窗</option>
+                            <option value="走道">走道</option>
+                        </select>
+                    </label>
+                    <button type="button" class="secondary-btn" id="swap-btn" onclick="swapStations()">起訖站互換</button>
+                </div>
+                <div class="right-group">
+                    <label class="label-horizontal">
+                        <span>搜尋方式</span>
+                        <div class="radio-group">
+                            <label><input type="radio" name="bookingMethod" value="radio31"> 時間</label>
+                            <label><input type="radio" name="bookingMethod" value="radio33" checked> 車次</label>
+                        </div>
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-row row-bottom">
+                <label class="label-horizontal">
+                    <span>出發站</span>
+                    <select name="start_station">
+                        <option value="南港">南港</option>
+                        <option value="台北">台北</option>
+                        <option value="板橋">板橋</option>
+                        <option value="桃園">桃園</option>
+                        <option value="新竹" selected>新竹</option>
+                        <option value="苗栗">苗栗</option>
+                        <option value="台中">台中</option>
+                        <option value="彰化">彰化</option>
+                        <option value="雲林">雲林</option>
+                        <option value="嘉義">嘉義</option>
+                        <option value="台南">台南</option>
+                        <option value="左營">左營</option>
                     </select>
-            </label>
-            <label>
-                張數
-                <input type="number" name="ticket_count" value="1" min="1" max="10" required>
-            </label>
-            <button type="submit">提交任務</button>
+                </label>
+
+                <label class="label-horizontal">
+                    <span>到達站</span>
+                    <select name="end_station">
+                        <option value="南港">南港</option>
+                        <option value="台北" selected>台北</option>
+                        <option value="板橋">板橋</option>
+                        <option value="桃園">桃園</option>
+                        <option value="新竹">新竹</option>
+                        <option value="苗栗">苗栗</option>
+                        <option value="台中">台中</option>
+                        <option value="彰化">彰化</option>
+                        <option value="雲林">雲林</option>
+                        <option value="嘉義">嘉義</option>
+                        <option value="台南">台南</option>
+                        <option value="左營">左營</option>
+                    </select>
+                </label>
+
+                <label class="label-horizontal">
+                    <span>乘車日期</span>
+                    <input type="date" name="travel_date" id="travel-date-input" required>
+                </label>
+
+                <label class="label-horizontal">
+                    <span>乘車時間</span>
+                    <select name="train_time" class="TimeTable">
+                        <option selected="selected" value="">請選擇...</option>
+                        <option value="00:00">00:00</option>
+                        <option value="00:30">00:30</option>
+                        <option value="05:00">05:00</option>
+                        <option value="05:30">05:30</option>
+                        <option value="06:00">06:00</option>
+                        <option value="06:30">06:30</option>
+                        <option value="07:00">07:00</option>
+                        <option value="07:30">07:30</option>
+                        <option value="08:00">08:00</option>
+                        <option value="08:30">08:30</option>
+                        <option value="09:00">09:00</option>
+                        <option value="09:30">09:30</option>
+                        <option value="10:00">10:00</option>
+                        <option value="10:30">10:30</option>
+                        <option value="11:00">11:00</option>
+                        <option value="11:30">11:30</option>
+                        <option value="12:00">12:00</option>
+                        <option value="12:30">12:30</option>
+                        <option value="13:00">13:00</option>
+                        <option value="13:30">13:30</option>
+                        <option value="14:00">14:00</option>
+                        <option value="14:30">14:30</option>
+                        <option value="15:00">15:00</option>
+                        <option value="15:30">15:30</option>
+                        <option value="16:00">16:00</option>
+                        <option value="16:30">16:30</option>
+                        <option value="17:00">17:00</option>
+                        <option value="17:30">17:30</option>
+                        <option value="18:00">18:00</option>
+                        <option value="18:30">18:30</option>
+                        <option value="19:00">19:00</option>
+                        <option value="19:30">19:30</option>
+                        <option value="20:00">20:00</option>
+                        <option value="20:30">20:30</option>
+                        <option value="21:00">21:00</option>
+                        <option value="21:30">21:30</option>
+                        <option value="22:00">22:00</option>
+                        <option value="22:30">22:30</option>
+                        <option value="23:00">23:00</option>
+                        <option value="23:30">23:30</option>
+                    </select>
+                </label>
+
+                <label class="label-horizontal">
+                    <span>車次</span>
+                    <input type="text" name="train_no" placeholder="例如 0123">
+                </label>
+
+                <label class="label-horizontal">
+                    <span>乘客姓名</span>
+                    <select name="name" id="passenger-select">
+                        <option value="">載入中...</option>
+                    </select>
+                </label>
+
+                <label class="label-horizontal">
+                    <span>張數</span>
+                    <input type="number" name="ticket_count" value="1" min="1" max="10">
+                </label>
+
+                <button type="submit" class="submit-btn">提交任務</button>
+            </div>
         </form>
 
-        <h2>訂票任務狀態</h2>
-        <div style="overflow-x:auto;">
-            <table>
+        <h3>訂票任務狀態 (最新顯示在最上方)</h3>
+        
+        <div class="table-container">
+            <table id="task-table">
                 <thead>
                     <tr>
                         <th>ID</th>
                         <th>姓名</th>
-                        <th>訂票資訊 (新格式)</th>
+                        <th>訂票資訊</th>
                         <th>狀態</th>
                         <th>訊息</th>
                         <th>提交時間</th>
@@ -122,293 +254,340 @@
                         <th>操作</th>
                     </tr>
                 </thead>
-                <tbody id="status-table-body">
-                    <tr>
-                        <td colspan="8">載入中...</td>
-                    </tr>
+                <tbody id="task-table-body">
+                    <!-- 由 JavaScript 動態生成 -->
                 </tbody>
             </table>
         </div>
-        <p style="margin-top: 1rem; font-size: 0.85rem; color: #666;">
-            已完成任務會在成功 2 天後、失敗/取消 60 分鐘後自動從此列表移除並歸檔到歷史紀錄。
-        </p>
+        <br>
+        <p class="archive-note">💡 已完成任務會在成功 2 天後、失敗/取消 60 分鐘後自動從此列表移除並歸檔到歷史紀錄。</p>
     </div>
 
-    <script>
-        const API_STATUS_URL = '/api/status';
-        const API_SUBMIT_URL = '/api/submit';
-        const API_CANCEL_URL = '/api/cancel';
-        const API_PASSENGER_URL = '/api/passenger';
-        const statusTableBody = document.getElementById('status-table-body');
-        const passengerSelect = document.getElementById('passenger-select');
+    <!-- 乘客資料頁面 -->
+    <div id="passenger-page" class="page">
+        <h2>乘客個人資料</h2>
+        <p>請在此管理您的乘客資料。</p>
+        <a href="/passenger.html">管理乘客個人資料</a>
+        <br>
+        <a href="/history.html">歷史訂票資訊</a>
+    </div>
+</div>
 
-        // 【新增/修改】追蹤變數和計時器 ID
-        let hasActiveTasks = false;
-        let statusIntervalId = null;
-
-        // 載入乘客資料
-        function loadPassengers() {
-            fetch(API_PASSENGER_URL)
-                .then(response => response.json())
-                .then(passengers => {
-                    passengerSelect.innerHTML = '<option value="">請選擇乘客</option>';
-                    if (passengers.length === 0) {
-                        passengerSelect.innerHTML = '<option value="">請先新增乘客個人資料</option>';
-                    } else {
-                        passengers.forEach(p => {
-                            const option = document.createElement('option');
-                            option.value = p.id;            // ✅ 修正 1：使用 p.id 作為 value
-                            option.textContent = p.name;    // ✅ 修正 2：只顯示姓名，不再顯示 personal_id 的部分資訊
-                            option.dataset.name = p.name; 
-                            passengerSelect.appendChild(option);
-                        });
-                    }
-                })
-                .catch(error => {
-                    console.error('Fetching passengers failed:', error);
-                });
+<script>
+    // 通用 URL 解析
+    function getApiUrl(path) {
+        if (path.startsWith('http')) return path;
+        const origin = window.location.origin;
+        if (!origin || origin === 'null' || origin.startsWith('blob:')) {
+            return path.startsWith('/') ? path.substring(1) : path;
         }
+        return new URL(path, origin).href;
+    }
 
-        // 提交表單處理 (提交成功後會呼叫 fetchAndUpdateStatus)
-        document.getElementById('booking-form').addEventListener('submit', function(e) {
-            e.preventDefault();
-            const form = e.target;
-            const formData = new FormData(form);
-            const data = {};
-            formData.forEach((value, key) => data[key] = value);
+    const API_TASKS_URL = getApiUrl('/api/get_tasks');
+    const API_SUBMIT_URL = getApiUrl('/api/submit_task');
+    const API_PASSENGERS_URL = getApiUrl('/api/get_passengers');
+    const API_CANCEL_URL = getApiUrl('/api/cancel_task');
 
-            // 獲取選擇的乘客姓名和 ID
-            const selectedOption = passengerSelect.options[passengerSelect.selectedIndex];
-            if (selectedOption && selectedOption.value) {
-                // ✅ 修正 3：使用一個新的 key (passenger_internal_id) 來傳輸非敏感的內部 ID
-                data.passenger_internal_id = selectedOption.value; 
-                data.name = selectedOption.dataset.name;
-            } else {
-                alert("請選擇有效的乘客或新增乘客資料。");
+    let statusTimer = null;
+
+    // 頁面切換
+    function showPage(pageId) {
+        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(pageId).classList.add('active');
+        if (event && event.currentTarget) event.currentTarget.classList.add('active');
+    }
+
+    // 起訖站互換
+    function swapStations() {
+        const startSelect = document.querySelector('select[name="start_station"]');
+        const destSelect = document.querySelector('select[name="end_station"]');
+        const temp = startSelect.value;
+        startSelect.value = destSelect.value;
+        destSelect.value = temp;
+    }
+
+    // 搜尋方式與輸入框連動
+    function initBookingMethodLogic() {
+        const radios = document.querySelectorAll('input[name="bookingMethod"]');
+        const trainTimeSelect = document.querySelector('select[name="train_time"]');
+        const trainNoInput = document.querySelector('input[name="train_no"]');
+
+        function updateInputs() {
+            const checkedRadio = document.querySelector('input[name="bookingMethod"]:checked');
+            if (!checkedRadio) return;
+            const selected = checkedRadio.value;
+            if (selected === 'radio31') { 
+                trainTimeSelect.disabled = false;
+                trainNoInput.disabled = true;
+                trainNoInput.value = ""; 
+            } else { 
+                trainTimeSelect.disabled = true;
+                trainNoInput.disabled = false;
+                trainTimeSelect.value = ""; 
+            }
+        }
+        radios.forEach(r => r.addEventListener('change', updateInputs));
+        updateInputs();
+    }
+
+    // 設定預設日期為今天
+    function setDefaultDate() {
+        const dateInput = document.getElementById('travel-date-input');
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        dateInput.value = `${year}-${month}-${day}`;
+    }
+
+    // 載入乘客資料
+    async function loadPassengers() {
+        const select = document.getElementById('passenger-select');
+        try {
+            const res = await fetch(API_PASSENGERS_URL);
+            const data = await res.json();
+            
+            select.innerHTML = '';
+            if (!data || data.length === 0) {
+                const opt = document.createElement('option');
+                opt.value = "";
+                opt.textContent = "請先新增乘客資料";
+                select.appendChild(opt);
                 return;
             }
-
-            // *** 檢查：確保沒有選到預設的請先新增乘客個人資料 ***
-            const name_select = form.querySelector('select[name="name"]');
-            if (name_select && name_select.value === "") {
-                const selected_option = name_select.options[name_select.selectedIndex];
-                if (selected_option.text === "請先新增乘客個人資料") {
-                    alert("請先前往 '乘客個人資料' 頁面新增乘客資料。");
-                    return; 
-                }
-            }
-            // *** 檢查結束 ***
-
-            fetch(API_SUBMIT_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json', 
-                },
-                // body 提交的 JSON 中，data 僅含 name
-                body: JSON.stringify(data) 
-            })
-            .then(response => response.json())
-            .then(result => {
-                if (result.status === 'success') {
-                    // alert(`訂票任務已成功提交！任務 ID: ${result.task_id}`);
-                    // form.reset(); // 不重置，保留使用者選取的站點等資訊
-                    // 僅重置下拉選單到預設狀態
-                    const name_select = form.querySelector('select[name="name"]');
-                    if (name_select) {
-                        name_select.selectedIndex = 0; 
-                    }
-                    
-                    fetchAndUpdateStatus(); 
-                } else {
-                    alert('提交失敗: ' + result.message);
-                }            })
-            .catch(error => {
-                console.error('提交錯誤:', error);
-                alert('提交任務時發生錯誤，請檢查主控台。');
+            
+            data.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id; 
+                opt.textContent = p.name;
+                opt.dataset.name = p.name;
+                select.appendChild(opt);
             });
-        });
+        } catch (err) {
+            console.error('載入乘客失敗:', err);
+            select.innerHTML = '<option value="">載入失敗，請重整頁面</option>';
+        }
+    }
 
-        // 取消/刪除任務
-        function cancelBooking(taskId) {
-            if (!confirm(`確定要取消/刪除任務 ${taskId} 嗎？`)) {
+    // 計時器控制
+    function updateInterval(enable) {
+        if (enable) {
+            if (statusTimer === null) {
+                statusTimer = setInterval(fetchTasks, 5000);
+            }
+        } else {
+            if (statusTimer !== null) {
+                clearInterval(statusTimer);
+                statusTimer = null;
+            }
+        }
+    }
+
+    // 更新任務狀態表格邏輯
+    const TWO_DAYS_IN_MS = 2 * 24 * 60 * 60 * 1000;
+
+    async function fetchTasks() {
+        const tbody = document.getElementById('task-table-body');
+        if (!tbody) return;
+
+        try {
+            const res = await fetch(API_TASKS_URL);
+            if (!res.ok) throw new Error('API 回傳失敗');
+            const json = await res.json();
+
+            // API 回傳格式: { status, worker_status, tasks: [...] }
+            const tasks = json.tasks;
+
+            tbody.innerHTML = '';
+
+            // 確保 tasks 是個陣列
+            if (!Array.isArray(tasks)) {
+                const errorMessage = json.message || `API 返回資料格式錯誤: ${JSON.stringify(json)}`;
+                console.error('API Error:', errorMessage, json);
+                tbody.innerHTML = `<tr><td colspan="8" style="color:#dc3545; font-weight:bold;">無法載入狀態資訊: ${errorMessage}</td></tr>`;
+                updateInterval(false);
                 return;
             }
-            fetch(`${API_CANCEL_URL}/${taskId}`, { method: 'POST' })
-                .then(response => response.json())
-                .then(result => {
-                    alert(result.message);
-                    fetchAndUpdateStatus();
-                })
-                .catch(error => {
-                    console.error('取消/刪除錯誤:', error);
-                });
-        }
 
-        // --- 取得並更新任務狀態 ---
-        function fetchAndUpdateStatus() {
-            // 假設 API_STATUS_URL 和 statusTableBody 已經定義
-            fetch(API_STATUS_URL)
-                .then(response => response.json())
-                .then(data => {
-                    const tasks = data.tasks; 
-                    statusTableBody.innerHTML = '';
-                    
-                    // 【修改點 1】重置 activeTasks 旗標
-                    let newActiveTasks = false; 
-
-                    // 1. 健壯性檢查：確保 tasks 是個陣列
-                    if (!Array.isArray(tasks)) {
-                        const errorMessage = data.message || `API 返回資料格式錯誤: ${JSON.stringify(data)}`;
-                        console.error('API Error:', errorMessage, data);
-                        // 假設您的表格有 9 欄 (8 個資料欄位 + 1 個操作欄位)
-                        statusTableBody.innerHTML = `<tr><td colspan="9" style="color: #dc3545; font-weight: bold;">無法載入狀態資訊: ${errorMessage}</td></tr>`;
-                        // 即使錯誤，我們也假設沒有活躍任務
-                        updateInterval(false); 
-                        return;
-                    }
-                    
-                    if (tasks.length === 0) {
-                        statusTableBody.innerHTML = '<tr><td colspan="9">目前沒有進行中的訂票任務。</td></tr>';
-                        // 【修改點 2】沒有任務時停止更新
-                        updateInterval(false); 
-                        return;
-                    }
-
-                    tasks.forEach(task => {
-                        // 【修改點 3】檢查是否有 pending 或 running 任務
-                        if (task.status === 'pending' || task.status === 'running') {
-                            newActiveTasks = true;
-                        }
-
-                        // 2. 解析 train_info 欄位
-                        // 格式: 從 [Start] 到 [End] ([Date] [Time])
-                        const match = task.train_info.match(/從\s*([^到]+)\s*到\s*([^ (]+)\s*\(([^ ]+)\s*([^)]+)\)/);
-                        let start_station = 'N/A';
-                        let end_station = 'N/A';
-                        let travel_date = 'N/A';
-                        let train_time = 'N/A';
-                        
-                        if (match) {
-                            start_station = match[1].trim();
-                            end_station = match[2].trim();
-                            let full_date = match[3].trim(); // 原始格式: YYYY-MM-DD
-                            train_time = match[4].trim();
-
-                            // 【⭐ 核心修改：轉換日期格式 ⭐】
-                            if (full_date !== 'N/A' && full_date.includes('-')) {
-                                const dateParts = full_date.split('-');
-                                // 僅取月份 (dateParts[1]) 和日期 (dateParts[2])，並以 '/' 連接
-                                if (dateParts.length === 3) {
-                                    travel_date = `${dateParts[1]}/${dateParts[2]}`; // MM/DD
-                                } else {
-                                    travel_date = full_date; // Fallback
-                                }
-                            } else {
-                                travel_date = full_date;
-                            }
-                        }
-
-                        const row = statusTableBody.insertRow();
-                        
-                        // 狀態 class 名稱 (用於 CSS 樣式)
-                        const statusClass = `status-${task.status}`; 
-                        
-                        // 狀態中文標籤
-                        let statusLabel = task.status;
-                        if (task.status === 'pending') statusLabel = '等待中';
-                        else if (task.status === 'running') statusLabel = '訂票中';
-                        else if (task.status === 'success') statusLabel = '✅ 成功';
-                        else if (task.status === 'failed') statusLabel = '❌ 失敗';
-                        else if (task.status === 'cancelling') statusLabel = '取消中';
-                        else if (task.status === 'cancelled') statusLabel = '❌ 取消';
-
-                        // 1. ID (使用 task.id) 
-                        // let displayId = task.id;
-                        // // 保持前端 ID 顯示邏輯，以顯示短 ID
-                        // if (displayId.length > 10 && displayId.includes('-')) {
-                        //     displayId = displayId.substring(8); 
-                        // }
-                        // row.insertCell().textContent = displayId;
-                        row.insertCell().textContent = task.id;
-
-                        // 2. 姓名 (使用 task.passenger_name)
-                        row.insertCell().textContent = task.passenger_name; 
-
-                        // 3. 訂票資訊 (新格式) - 站點與時間
-                        // 這裡使用新的 travel_date 格式: MM/DD
-                        row.insertCell().textContent = `${start_station} → ${end_station} (${travel_date} ${train_time})`;
-
-                        // 4. 狀態
-                        const statusCell = row.insertCell();
-                        statusCell.innerHTML = `<span class="${statusClass}">${statusLabel}</span>`;
-
-                        // 5. 訊息 (使用 task.message)
-                        row.insertCell().textContent = task.message || '等待中...';
-                        
-                        // 6. 提交時間 (API 未提供，假設從 train_info 解析)
-                        // 由於 API 提供的資料 task 裡沒有 submit_time，這裡暫時使用 —
-                        row.insertCell().textContent = task.submit_time ? task.submit_time.split(' ')[1] : '—'; 
-                        // row.insertCell().textContent = 'TBD'; // 假設後端沒有提供
-
-                        // 7. 更新時間 (僅顯示時間部分)
-                        row.insertCell().textContent = task.update_time ? task.update_time.split(' ')[1] : '—';
-                        
-                        // 8. 操作
-                        const deleteCell = row.insertCell();
-                        
-                        if (task.status === 'pending' || task.status === 'running' || task.status === 'cancelling') {
-                            const deleteButton = document.createElement('button');
-                            deleteButton.textContent = (task.status === 'running' || task.status === 'cancelling') ? '放棄' : '刪除';
-                            deleteButton.className = 'delete-button';
-                            // 確保呼叫函式時使用正確的 ID 欄位
-                            deleteButton.onclick = () => cancelBooking(task.id); 
-                            deleteCell.appendChild(deleteButton);
-                        } else {
-                            deleteCell.textContent = '—';
-                        }
-                    });
-                    
-                    // 【修改點 4】在任務列表渲染完成後，根據新的活躍任務狀態更新計時器
-                    updateInterval(newActiveTasks);
-
-                })
-                .catch(error => {
-                    console.error('Fetching status failed:', error);
-                    statusTableBody.innerHTML = '<tr><td colspan="9" style="color: #dc3545; font-weight: bold;">無法載入狀態資訊：網路或伺服器連線錯誤。</td></tr>';
-                    // 【修改點 5】如果失敗，停止更新，直到使用者再次操作
-                    updateInterval(false); 
-                });
-        }
-
-        // 【新增函式】控制自動更新的計時器
-        function updateInterval(shouldBeActive) {
-            // 檢查是否需要啟動/維持計時器
-            if (shouldBeActive) {
-                // 如果目前沒有計時器，則啟動一個
-                if (statusIntervalId === null) {
-                    console.log("啟動狀態自動更新 (5 秒)");
-                    statusIntervalId = setInterval(fetchAndUpdateStatus, 5000);
-                    hasActiveTasks = true;
-                }
-            } else {
-                // 如果目前有計時器，但不需要了，則清除它
-                if (statusIntervalId !== null) {
-                    console.log("停止狀態自動更新");
-                    clearInterval(statusIntervalId);
-                    statusIntervalId = null;
-                    hasActiveTasks = false;
-                }
+            if (tasks.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;">目前沒有進行中的訂票任務。</td></tr>';
+                updateInterval(false);
+                return;
             }
-        }
-        
-        // 首次載入和每 5 秒自動更新
-        document.addEventListener('DOMContentLoaded', () => {
-            loadPassengers(); // 確保乘客資料先載入
-            fetchAndUpdateStatus();
-        });
 
-        // 移除原有的 setInterval(fetchAndUpdateStatus, 5000);
-        // 現在由 updateInterval(true/false) 邏輯來控制計時器的啟動與停止。
-    </script>
+            // default 設為 false，只要有 pending/running/cancelling 才設為 true
+            let newActiveTasks = false;
+            const nowTime = new Date().getTime();
+
+            tasks.forEach(task => {
+                const status = task.status || 'unknown';
+
+                // 檢查是否有 pending / running / cancelling 任務，若有則持續更新
+                if (status === 'pending' || status === 'running' || status === 'cancelling') {
+                    newActiveTasks = true;
+                }
+
+                // --- 根據 submit_time 過濾超過 2 天的任務 ---
+                const submitTimeStr = task.submit_time;
+                if (submitTimeStr) {
+                    try {
+                        // 'YYYY/MM/DD HH:MM:SS' → ISO 格式以確保跨瀏覽器相容
+                        const isoTimeStr = submitTimeStr.replace(/\//g, '-').replace(' ', 'T');
+                        const submitTimeMs = new Date(isoTimeStr).getTime();
+                        if (nowTime - submitTimeMs > TWO_DAYS_IN_MS) {
+                            console.log(`Task ${task.id} submitted over 2 days ago, skipping display.`);
+                            return; // continue (跳過此筆)
+                        }
+                    } catch (e) {
+                        console.error('Invalid submit_time format:', submitTimeStr);
+                    }
+                }
+
+                // --- 狀態中文標籤 ---
+                let statusLabel = status;
+                if      (status === 'running')    statusLabel = '訂票中';
+                else if (status === 'pending')    statusLabel = '等待中';
+                else if (status === 'cancelling') statusLabel = '取消中';
+                else if (status === 'success')    statusLabel = '成功';
+                else if (status === 'failed')     statusLabel = '失敗';
+                else if (status === 'cancelled')  statusLabel = '取消';
+
+                // --- 解析 train_info 欄位 ---
+                // 格式: 從 [起站] 到 [訖站] (YYYY-MM-DD HH:MM)
+                let bookingInfo = task.train_info || '-';
+                const match = task.train_info
+                    ? task.train_info.match(/從\s*([^到]+)\s*到\s*([^ (]+)\s*\(([^ )]+)\s*([^)]*)\)/)
+                    : null;
+
+                if (match) {
+                    const start_station = match[1].trim();
+                    const end_station   = match[2].trim();
+                    const train_time    = match[4].trim();
+
+                    // 日期格式轉換: YYYY-MM-DD → MM/DD
+                    let travel_date = match[3].trim();
+                    if (travel_date !== 'N/A' && travel_date.includes('-')) {
+                        const parts = travel_date.split('-');
+                        if (parts.length === 3) travel_date = `${parts[1]}/${parts[2]}`;
+                    }
+
+                    bookingInfo = `${start_station} → ${end_station} (${travel_date} ${train_time})`;
+                }
+
+                // --- 提交/更新時間：只顯示時間部分 (HH:MM:SS) ---
+                const submitTime = task.submit_time ? task.submit_time.split(' ')[1] : '—';
+                const updateTime = task.update_time ? task.update_time.split(' ')[1] : '—';
+
+                // --- 操作按鈕 ---
+                let actionBtn = '—';
+                if (status === 'pending') {
+                    actionBtn = `<button class="secondary-btn" style="height:30px; padding:2px 10px; font-size:0.8rem;" onclick="cancelTask('${task.id}')">刪除</button>`;
+                } else if (status === 'running' || status === 'cancelling') {
+                    actionBtn = `<button class="secondary-btn" style="height:30px; padding:2px 10px; font-size:0.8rem;" onclick="cancelTask('${task.id}')">放棄</button>`;
+                }
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><code>${task.id}</code></td>
+                    <td>${task.passenger_name || '未指定'}</td>
+                    <td>${bookingInfo}</td>
+                    <td><span class="status-${status}">${statusLabel}</span></td>
+                    <td>${task.message || '等待中...'}</td>
+                    <td><small>${submitTime}</small></td>
+                    <td><small>${updateTime}</small></td>
+                    <td>${actionBtn}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            updateInterval(newActiveTasks);
+
+        } catch (err) {
+            console.error('獲取任務失敗:', err);
+            tbody.innerHTML = '<tr><td colspan="8" style="color:#dc3545; font-weight:bold;">無法載入狀態資訊：網路或伺服器連線錯誤。</td></tr>';
+            updateInterval(false);
+        }
+    }
+
+    // 取消任務
+    async function cancelTask(id) {
+        if(!confirm('確定要取消此任務嗎？')) return;
+        try {
+            await fetch(API_CANCEL_URL, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id: id})
+            });
+            fetchTasks();
+        } catch (e) {
+            console.error('取消任務失敗:', e);
+        }
+    }
+
+    // 表單提交邏輯
+    document.getElementById('booking-form').onsubmit = async function(e) {
+        e.preventDefault();
+        const form = e.target;
+        
+        const bookingMethod = form.querySelector('input[name="bookingMethod"]:checked').value;
+        const name_select = document.getElementById('passenger-select');
+        const selectedOption = name_select.options[name_select.selectedIndex];
+
+        if (!selectedOption || selectedOption.value === "" || 
+            selectedOption.text === "載入中..." || 
+            selectedOption.text === "請先新增乘客資料") {
+            alert("請先前往 '乘客個人資料' 頁面新增乘客資料，否則無法提交訂票任務。");
+            return;
+        }
+
+        if(!form.travel_date.value) { alert('請選擇乘車日期'); return; }
+        
+        if(bookingMethod === 'radio31' && !form.train_time.value) {
+            alert('請選擇乘車時間');
+            return;
+        }
+
+        const data = {
+            bookingMethod: bookingMethod,
+            start_station: form.start_station.value,
+            end_station: form.end_station.value,
+            travel_date: form.travel_date.value,
+            train_time: form.train_time.value,
+            train_no: form.train_no.value,
+            seat_class: form.seat_class.value,
+            seat_option: form.seat_option.value,
+            passenger_internal_id: selectedOption.value,
+            name: selectedOption.dataset.name
+        };
+
+        try {
+            const res = await fetch(API_SUBMIT_URL, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+            const result = await res.json();
+            if(result.status === 'success') {
+                // alert('任務提交成功！');
+                fetchTasks(); 
+            } else {
+                alert('錯誤: ' + (result.message || '提交失敗'));
+            }
+        } catch (err) {
+            alert('提交時發生通訊錯誤');
+        }
+    };
+
+    // 初始化
+    document.addEventListener('DOMContentLoaded', async function() {
+        initBookingMethodLogic();
+        setDefaultDate();
+        await loadPassengers();
+        await fetchTasks();
+    });
+</script>
+
 </body>
 </html>
