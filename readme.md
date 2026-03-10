@@ -9,18 +9,43 @@ Keywords: [Flask](http://flask.pocoo.org/), [Flask Source](https://github.com/pa
 
 The program will be developed and tested in the following environments.
 
-Back-End Server:
+### Back-End Server:
 
-1) MS Windows 7 + Python 3.8.10  (the program is launched by `python app.py`)
-2) Linux 6.8.10 + Python 3.10.12 (the program is launched by `gunicorn --bind 0.0.0.0:8000 app:app`)
-3) Github codespaces (2026-03-05)
+1) Microsoft Windows 7
+   - only support local browser
+   ```
+   Python: 3.8.10
+   $ python app.py
+   ```
+
+2) Github codespaces (2026-03-05)
    ```
    Python: 3.12.1
    $ source clean_build.sh
-   $ gunicorn --bind 0.0.0.0:8000 app:app (網頁下單後, Server並沒有處理訂單)
    $ python app.py (working fine)
+   
+   Known issue:
+   $ gunicorn --bind 0.0.0.0:8000 app:app (網頁下單後, Server並沒有處理訂單)
    ```
-Front-End Client:
+
+3) CS50 codespaces (2026-03-09)
+   ```
+   Python: 3.13.11
+   $ source clean_build.sh
+   $ python app.py
+   Note: setup a forwarding port to external browser
+
+   Known issue:
+   $ gunicorn --bind 0.0.0.0:8000 app:app (網頁出不來)
+   ```
+
+4) Google Cloud VM - Ubuntu 24.04 TLS
+   ```
+   Linux 6.8.10 + Python 3.10.12
+   $ gunicorn --bind 0.0.0.0:8000 app:app
+   ```
+
+### Front-End Client:
 
 1) Browser running on devices with internet access (e.g., Desktop, Laptop, Smart Phone, Tablet, ...)
 2) Use natural language in Line-Bot
@@ -41,48 +66,10 @@ $ export LINE_CHANNEL_ACCESS_TOKEN=YOUR_LINE_CHANNEL_ACCESS_TOKEN
 $ pip install -r requirements.txt --ignore-requires-python
 ```
 
-Run Flask application - flask-thsr
+### Run Flask application - flask-thsr
 
 ```
 $ python app.py
-```
-
-## <span style="color:yellow;">Running on GitHub Codespace</span>
-
-### Installing Python dependencies
-```
-python -m venv venv
-source ./venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements_thsr_bot.txt --ignore-requires-python
-```
-
-### Run Gunicorn
-```
-(venv) /workspaces/projects/thsr-bot/ $ gunicorn --env DEPLOY_ENV=Render app:app
-[2025-10-28 19:37:45 +0800] [24332] [INFO] Starting gunicorn 23.0.0
-[2025-10-28 19:37:45 +0800] [24332] [INFO] Listening at: http://127.0.0.1:8000 (24332)
-[2025-10-28 19:37:45 +0800] [24332] [INFO] Using worker: sync
-[2025-10-28 19:37:45 +0800] [24336] [INFO] Booting worker with pid: 24336
-```
-
-## <span style="color:yellow;">Running on GitHub Codespace</span>
-
-### Installing Python dependencies
-```
-python -m venv venv
-source ./venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements_thsr_bot.txt --ignore-requires-python
-```
-
-### Run Gunicorn
-```
-(venv) /workspaces/projects/thsr-bot/ $ gunicorn --env DEPLOY_ENV=Render app:app
-[2025-10-28 19:37:45 +0800] [24332] [INFO] Starting gunicorn 23.0.0
-[2025-10-28 19:37:45 +0800] [24332] [INFO] Listening at: http://127.0.0.1:8000 (24332)
-[2025-10-28 19:37:45 +0800] [24332] [INFO] Using worker: sync
-[2025-10-28 19:37:45 +0800] [24336] [INFO] Booting worker with pid: 24336
 ```
 
 ## <span style="color:yellow;">Running on Windows 7</span>
@@ -167,6 +154,53 @@ zope.interface         7.2
 ```
 (venv) D:\UserData\Scott\Source\Python\thsr-bot>python app.py
 ```
+
+## <span style="color:yellow;">Running on GitHub Codespace</span>
+
+### Installing Python dependencies
+```
+python -m venv venv
+source ./venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements_thsr_bot.txt --ignore-requires-python
+```
+
+### Run Gunicorn
+```
+(venv) /workspaces/projects/thsr-bot/ $ gunicorn --env DEPLOY_ENV=Render app:app
+[2025-10-28 19:37:45 +0800] [24332] [INFO] Starting gunicorn 23.0.0
+[2025-10-28 19:37:45 +0800] [24332] [INFO] Listening at: http://127.0.0.1:8000 (24332)
+[2025-10-28 19:37:45 +0800] [24332] [INFO] Using worker: sync
+[2025-10-28 19:37:45 +0800] [24336] [INFO] Booting worker with pid: 24336
+```
+
+## <span style="color:yellow;">Running on CS50 Codespace</span>
+
+### Installing Python dependencies
+```
+python -m venv venv
+source ./venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements_thsr_bot.txt --ignore-requires-python
+```
+
+### Run Flask app (for development purpose)
+```
+(venv) /workspaces/projects/thsr-bot/ $ python app.py
+```
+
+### Run Gunicorn (for production deployment)
+```
+(venv) /workspaces/projects/thsr-bot/ $ gunicorn --env DEPLOY_ENV=Render app:app
+[2025-10-28 19:37:45 +0800] [24332] [INFO] Starting gunicorn 23.0.0
+[2025-10-28 19:37:45 +0800] [24332] [INFO] Listening at: http://127.0.0.1:8000 (24332)
+[2025-10-28 19:37:45 +0800] [24332] [INFO] Using worker: sync
+[2025-10-28 19:37:45 +0800] [24336] [INFO] Booting worker with pid: 24336
+```
+
+### Setup forwarding port
+
+Port forwarding in **CS50.dev** allows a program running on a port inside the cloud environment to be accessed from your web browser through a public URL.
 
 ## <span style="color:yellow;">Deploying on Render (Suspend support)</span>
 

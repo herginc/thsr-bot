@@ -16,13 +16,6 @@
         /* 歸檔提示文字樣式 */
         .archive-note { font-size: 0.85rem; color: #666; margin-bottom: 1rem; margin-top: -0.5rem; background: #fffde7; padding: 8px; border-left: 4px solid #fbc02d; border-radius: 4px; }
 
-        .nav-tabs { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid #ddd; overflow-x: auto; white-space: nowrap; }
-        .nav-btn { padding: 0.6rem 1rem; border: none; background: none; cursor: pointer; font-size: 1rem; color: #666; border-bottom: 3px solid transparent; }
-        .nav-btn.active { color: #1565c0; border-bottom-color: #1565c0; font-weight: bold; }
-        
-        .page { display: none; }
-        .page.active { display: block; }
-
         /* 表單布局 */
         form { width: 100%; }
         .form-row { display: flex; width: 100%; gap: 1.5rem; align-items: center; margin-bottom: 1.5rem; }
@@ -66,6 +59,13 @@
         .radio-group label { flex-direction: row !important; gap: 0.4rem; cursor: pointer; font-weight: normal; min-width: auto; align-items: center; }
         .radio-group input { margin-top: 0; width: auto; }
 
+        .dropdown-menu-wrap { position: relative; }
+        .dropdown-toggle { background: #1565c0; color: #fff; border: none; border-radius: 5px; padding: 0.5rem 1rem; font-size: 0.95rem; cursor: pointer; font-weight: bold; transition: background 0.2s; white-space: nowrap; }
+        .dropdown-toggle:hover { background: #0d47a1; }
+        .dropdown-list { display: none; position: absolute; right: 0; top: calc(100% + 6px); background: #fff; border: 1px solid #ddd; border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); min-width: 160px; list-style: none; margin: 0; padding: 0.3rem 0; z-index: 999; }
+        .dropdown-list.open { display: block; }
+        .dropdown-list li a { display: block; padding: 0.65rem 1.2rem; color: #1565c0; text-decoration: none; font-size: 0.95rem; font-weight: normal; margin: 0; white-space: nowrap; }
+        .dropdown-list li a:hover { background: #e3f2fd; }
         @media (max-width: 768px) {
             header { font-size: 1.5rem; padding: 1rem 0; }
             .container { padding: 1.5rem 1rem; }
@@ -89,14 +89,18 @@
 <header>高鐵訂票系統</header>
 
 <div class="container">
-    <div class="nav-tabs">
-        <button class="nav-btn active" onclick="showPage('booking-page')">訂票任務</button>
-        <button class="nav-btn" onclick="showPage('passenger-page')">乘客個人資料</button>
-    </div>
-
     <!-- 訂票任務頁面 -->
-    <div id="booking-page" class="page active">
-        <h2>新增訂票任務</h2>
+    <div id="booking-page">
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 2px solid #e3f2fd; padding-bottom: 0.5rem; margin-bottom: 1rem;">
+            <h2 style="margin:0; border:none; padding:0;">新增訂票任務</h2>
+            <div class="dropdown-menu-wrap">
+                <button class="dropdown-toggle" onclick="toggleDropdown(event)">&#9776; 選單</button>
+                <ul class="dropdown-list" id="site-dropdown">
+                    <li><a href="/passenger.html">乘客個人資料</a></li>
+                    <li><a href="/history.html">歷史訂票資訊</a></li>
+                </ul>
+            </div>
+        </div>
         <form id="booking-form">
             <div class="form-row row-top">
                 <div class="left-group">
@@ -263,14 +267,6 @@
         <p class="archive-note">💡 已完成任務會在成功 2 天後、失敗/取消 60 分鐘後自動從此列表移除並歸檔到歷史紀錄。</p>
     </div>
 
-    <!-- 乘客資料頁面 -->
-    <div id="passenger-page" class="page">
-        <h2>乘客個人資料</h2>
-        <p>請在此管理您的乘客資料。</p>
-        <a href="/passenger.html">管理乘客個人資料</a>
-        <br>
-        <a href="/history.html">歷史訂票資訊</a>
-    </div>
 </div>
 
 <script>
@@ -290,6 +286,15 @@
     const API_CANCEL_URL = getApiUrl('/api/cancel_task');
 
     let statusTimer = null;
+
+    function toggleDropdown(e) {
+        e.stopPropagation();
+        document.getElementById('site-dropdown').classList.toggle('open');
+    }
+    document.addEventListener('click', function() {
+        const dd = document.getElementById('site-dropdown');
+        if (dd) dd.classList.remove('open');
+    });
 
     // 頁面切換
     function showPage(pageId) {

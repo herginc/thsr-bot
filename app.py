@@ -719,7 +719,8 @@ def passenger_page():
 @app.route("/history.html")
 def history_page():
     # 這裡的邏輯需要與實際的 history.json 格式相符
-    history = load_json(HISTORY_FILE)
+    # history = load_json(HISTORY_FILE)     # ❌ 直接讀 JSON，無格式化
+    history = load_history()                # ✅ 使用 load_history()，包含格式化
     
     # 假設 history.json 中的每個項目已經包含所需的鍵
     # 為了簡化，這裡僅傳遞 history 列表

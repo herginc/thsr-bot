@@ -4,30 +4,39 @@
     <meta charset="UTF-8">
     <title>歷史訂票資訊</title>
     <style>
-        /* (CSS 樣式保持不變) */
         body { font-family: "Noto Sans TC", Arial, sans-serif; background: #f7f7fa; margin: 0; padding: 0; }
         header { background: #1565c0; color: #fff; padding: 1.5rem 0; text-align: center; letter-spacing: 0.1em; font-size: 2rem; margin-bottom: 2rem; box-shadow: 0 2px 8px #ccc; }
-        .container { max-width: 900px; margin: 0 auto; background: #fff; border-radius: 10px; box-shadow: 0 2px 12px #ddd; padding: 2rem 2.5rem 2.5rem 2.5rem; }
-        h2, h3 { color: #1565c0; margin-top: 0; }
+        .container { max-width: 1100px; width: 95%; margin: 0 auto; background: #fff; border-radius: 10px; box-shadow: 0 2px 12px #ddd; padding: 2rem 1.5rem 2.5rem 1.5rem; }
+        h2 { color: #1565c0; margin-top: 0; border-bottom: 2px solid #e3f2fd; padding-bottom: 0.5rem; }
         a { color: #1565c0; text-decoration: none; margin-bottom: 1rem; display: block; font-weight: bold; }
         a:hover { text-decoration: underline; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; background: #fafbfc; font-size: 1rem; }
-        th, td { border: 1px solid #e0e0e0; padding: 0.7rem 0.5rem; text-align: center; word-break: break-all; }
-        th { background: #e3f2fd; color: #1565c0; font-weight: bold; }
-        tr:nth-child(even) { background: #f9f9f9; }
-        @media (max-width: 600px) { .container { padding: 0.5rem; } header { font-size: 1.3rem; padding: 1rem 0; } h2 { font-size: 1.1rem; } table, th, td { font-size: 0.75rem; } }
+        .table-container { width: 100%; overflow-x: auto; margin-top: 1rem; border: 1px solid #eee; border-radius: 5px; }
+        table { width: 100%; border-collapse: collapse; background: #fff; font-size: 0.85rem; min-width: 850px; }
+        th, td { text-align: left; padding: 0.8rem; border-bottom: 1px solid #eee; vertical-align: top; }
+        th { background-color: #f1f8ff; color: #1565c0; white-space: nowrap; }
+        tr:nth-child(even) td { background: #f9f9f9; }
+        .status-success  { color: #388e3c; font-weight: bold; }
+        .status-failed   { color: #d32f2f; font-weight: bold; }
+        .status-cancelled { color: #9e9e9e; font-weight: bold; }
+        @media (max-width: 768px) {
+            header { font-size: 1.5rem; padding: 1rem 0; }
+            .container { padding: 1rem 0.75rem; }
+            h2 { font-size: 1.1rem; }
+        }
     </style>
 </head>
 <body>
     <header>歷史訂票資訊</header>
     <div class="container">
-        <a href="/">&#x2190; 返回訂票首頁</a>
-        <h2>訂票紀錄</h2>
-        <div style="overflow-x:auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 2px solid #e3f2fd; padding-bottom: 0.5rem; margin-bottom: 1rem;">
+            <h2 style="margin:0; border:none; padding:0;">訂票紀錄</h2>
+            <a href="/" style="display:inline-block; margin:0; background:#1565c0; color:#fff; padding:0.5rem 1rem; border-radius:5px; font-size:0.95rem; text-decoration:none; font-weight:bold; white-space:nowrap;">&#8592; 回首頁</a>
+        </div>
+        <div class="table-container">
         <table>
             <thead>
                 <tr>
-                    <th>id</th>
+                    <th>ID</th>
                     <th>訂票結果</th>
                     <th>訂位代號</th>
                     <th>訂票時間</th>
@@ -41,8 +50,8 @@
             <tbody>
                 {% for h in history %}
                 <tr>
-                    <td>{{ h.id }}</td>
-                    <td>{{ h.result }}</td>
+                    <td>{{ h.task_id }}</td>
+                    <td><span class="status-{{ h.result }}">{{ h.result_text }}</span></td>
                     <td>{{ h.code if h.code != 'N/A' else '—' }}</td>
                     <td>{{ h.formatted_order_date }}</td>
                     <td>{{ h.name }}</td>
@@ -53,7 +62,7 @@
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="9">目前沒有歷史訂票紀錄。</td>
+                    <td colspan="9" style="text-align:center;">目前沒有歷史訂票紀錄。</td>
                 </tr>
                 {% endfor %}
             </tbody>
