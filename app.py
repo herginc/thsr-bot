@@ -55,9 +55,12 @@ def save_json(filename, data):
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
+# ----------------------------------------------------------------------------
+# ID 生成器：取得當前毫秒級時間戳後面8碼
+# 例如：1731159842567.89 -> 1731159842568
+# ----------------------------------------------------------------------------
 def get_new_passenger_id():
-    # 假設的 ID 生成器：取得當前毫秒級時間戳
-    # 例如：1731159842567.89 -> 1731159842568
+
     # 1. 取得毫秒級時間戳並轉換為整數
     full_timestamp = int(time.time() * 1000)
     
@@ -189,8 +192,9 @@ def load_tasks():
         return retained_tasks
 
 
+# ----------------------------------------------------------------------------
 # app.py: 修正 load_history 函式
-
+# ----------------------------------------------------------------------------
 def load_history():
     """
     載入歷史紀錄 (history.json)，並清理超過 365 天的紀錄。
@@ -220,7 +224,7 @@ def load_history():
                     data = h.get('data', {})
                     
                     # 1. 訂票結果
-                    h['result_text'] = {'success': '成功', 'failed': '失敗', 'cancelled': '已取消'}.get(h.get('result', ''), '未知')
+                    h['result_text'] = {'success': '成功', 'failed': '失敗', 'cancelled': '取消'}.get(h.get('result', ''), '未知')
                     
                     # 2. 訂票時間 (finish_time)
                     h['formatted_order_date'] = finish_datetime.strftime('%Y/%m/%d %H:%M:%S')
@@ -280,7 +284,6 @@ for task in booking_tasks:
         task['message'] = '伺服器重啟，任務失敗或已中斷。'
         task['update_time'] = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
 
-next_task_id = len(booking_tasks) + 1 
 current_cancel_event: Optional[threading.Event] = None
 # --- 核心配置與全局狀態 (保持不變) ---
 
@@ -299,21 +302,40 @@ def start_booking_worker_thread():
             booking_thread = threading.Thread(target=run_booking_worker, daemon=True)
             booking_thread.start()
 
+# ----------------------------------------------------------------------------
+# task_id format: YYYYMMDD-NN
+# YYYYMMDD = datetime.now(CST_TIMEZONE).strftime('%Y%m%d') = 當天日期
+# NN = 2位數序號 = 00, 01, 02, 03, ... 依序編號
+# new task_id 的 YYYYMMDD 若與上一筆 task_id 的 YYYYMMDD 不同時, 則 NN 為 00 
+# new task_id 的 YYYYMMDD 若與上一筆 task_id 的 YYYYMMDD 相同時, 則 new task_id 
+# 的 NN 為 上一筆 task_id 的 NN + 1
+# ----------------------------------------------------------------------------
 def get_new_task_id() -> str:
-    global next_task_id
     with data_lock:
-        task_id = str(next_task_id)
-        next_task_id += 1
-        return datetime.now(CST_TIMEZONE).strftime('%Y%m%d') + '-' + task_id
-        # return datetime.now(CST_TIMEZONE).strftime('%Y%m%d%H%M%S') + '-' + task_id  # 使用時間戳 + id 確保唯一性
+        today_str = datetime.now(CST_TIMEZONE).strftime('%Y%m%d')
+        
+        # 找出最後一筆 task_id
+        last_task_id = booking_tasks[-1]['task_id'] if booking_tasks else None
+        
+        if last_task_id and last_task_id.startswith(today_str):
+            # 與上一筆同一天 → NN + 1
+            last_nn = int(last_task_id.split('-')[1])
+            nn = last_nn + 1
+        else:
+            # 不同天（或沒有任何任務）→ NN 從 00 開始
+            nn = 0
+        
+        return f"{today_str}-{nn:02d}"
 
+# ----------------------------------------------------------------------------
+# 
+# ----------------------------------------------------------------------------
 def get_task_by_id(task_id: str) -> Optional[Dict[str, Any]]:
     # 注意：此函式預期在 data_lock 內被呼叫，或僅用於讀取
     for task in booking_tasks:
         if task['task_id'] == task_id:
             return task
     return None
-
 
 # ----------------------------------------------------------------------------
 # 根據task_id更新任務狀態並記錄更新時間。
@@ -615,6 +637,7 @@ def cancel_booking(task_id):
     with data_lock:
         task = get_task_by_id(task_id)
         if not task:
+            print(RED + f"找不到任務 ID: {task_id}" + RESET)
             return jsonify({"status": "error", "message": f"找不到任務 ID: {task_id}"}), 404
         
         current_status = task['status']

@@ -264,7 +264,7 @@
             </table>
         </div>
         <br>
-        <p class="archive-note">💡 已完成任務會在成功 2 天後、失敗/取消 60 分鐘後自動從此列表移除並歸檔到歷史紀錄。</p>
+        <p class="archive-note">💡 已完成任務會在成功 2 天後、失敗/取消任務 60 分鐘後自動從此列表移除並歸檔到歷史紀錄。</p>
     </div>
 
 </div>
@@ -520,10 +520,9 @@
     async function cancelTask(id) {
         if(!confirm('確定要取消此任務嗎？')) return;
         try {
-            await fetch(API_CANCEL_URL, {
+            await fetch(`${API_CANCEL_URL}/${id}`, {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: id})
+                headers: {'Content-Type': 'application/json'}
             });
             fetchTasks();
         } catch (e) {
