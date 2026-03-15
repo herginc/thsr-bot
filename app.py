@@ -19,9 +19,37 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from flask import Flask, request, abort, render_template, jsonify, redirect
 
 import booking
+import proxy
 import re
 from config import *
 import logging
+
+# ----------------------------------------------------------------------------
+# 訂票模式切換
+# True  → 使用 booking.thsr_run_booking_flow_with_data (模擬版本，用於開發/測試)
+# False → 使用 proxy.thsr_run_booking_flow             (真實版本，連接高鐵官網)
+# ----------------------------------------------------------------------------
+# USE_MOCK_BOOKING = True
+USE_MOCK_BOOKING = False
+
+
+# ----------------------------------------------------------------------------
+# 
+# ----------------------------------------------------------------------------
+
+# 'with lock' guideline:
+# < 10 行
+# 不做 I/O
+# 不做 sleep
+# 不呼叫未知函式
+#
+# 盡量使用:
+# Thread → Queue → Worker
+
+
+# ----------------------------------------------------------------------------
+# 
+# ----------------------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
 # 配置 logger 格式
@@ -33,7 +61,15 @@ PASSENGER_FILE  = 'passenger.json'
 TASKS_FILE      = 'tasks.json'
 HISTORY_FILE    = 'history.json'
 
+# 使用 timedelta 支援 Python 3.8
+CST_TIMEZONE = timezone(timedelta(hours=8))
+
+
 # --- Helper Functions ---
+
+# ----------------------------------------------------------------------------
+# load json file
+# ----------------------------------------------------------------------------
 def load_json(filename):
     if not os.path.exists(filename):
         # 根據檔案類型返回不同的預設值
@@ -44,6 +80,7 @@ def load_json(filename):
         elif filename == HISTORY_FILE:
             return []
         return None
+
     with open(filename, 'r', encoding='utf-8') as f:
         try:
             return json.load(f)
@@ -51,13 +88,57 @@ def load_json(filename):
             print(f"Warning: Failed to decode JSON from {filename}. Returning empty list.")
             return []
 
+# ----------------------------------------------------------------------------
+# save json file
+# ----------------------------------------------------------------------------
 def save_json(filename, data):
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
+
+# ----------------------------------------------------------------------------
+# --- 核心配置與全局狀態 ---
+# ----------------------------------------------------------------------------
+
+data_lock = threading.RLock()
+
+# --- 全局狀態新增 ---
+booking_thread: Optional[threading.Thread] = None
+current_running_task_id: Optional[str] = None
+current_cancel_event: Optional[threading.Event] = None
+
+# 載入上次的任務，並將所有 'running' 或 'cancelling' 狀態重設為 'failed'
+booking_tasks: List[Dict[str, Any]] = load_json(TASKS_FILE) 
+
+for task in booking_tasks:
+    # [scott@2026-03-14] status = 'pending' case 也要考慮進去
+    # task內容有變, 理論上應該要再回存檔案, 但因下面只要有save_json(TASKS_FILE)就會更新到此異動
+    if (task['status'] == 'running') or (task['status'] == 'pending') or (task['status'] == 'cancelling'):
+        task['status'] = 'failed'
+        task['message'] = '伺服器重啟，任務失敗或已中斷。'
+        task['update_time'] = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
+
+# current_cancel_event: Optional[threading.Event] = None
+
+app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+
+# ----------------------------------------------------------------------------
+# 啟動背景 Worker 執行緒 (兼容 Gunicorn 和 python app.py)
+# ----------------------------------------------------------------------------
+# 必須在 app 實例化之後調用，並定義為一般函式
+def start_booking_worker_thread():
+    global booking_thread
+    with data_lock:
+        if booking_thread is None or not booking_thread.is_alive():
+            print(f"[{datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')}] 啟動背景訂票 worker 執行緒...")
+            booking_thread = threading.Thread(target=run_booking_worker, daemon=True)
+            booking_thread.start()
+
 # ----------------------------------------------------------------------------
 # ID 生成器：取得當前毫秒級時間戳後面8碼
-# 例如：1731159842567.89 -> 1731159842568
+# 例如：1731159842567.89 -> 1731159842568 -> 59842568
 # ----------------------------------------------------------------------------
 def get_new_passenger_id():
 
@@ -76,8 +157,12 @@ def get_new_passenger_id():
 # 從TASKS_FILE載入任務, 格式化訂票資訊以符合訂票任務狀態表格格式, 並整理過期的任務.
 # 將已過期任務拿掉後, 再回存到TASKS_FILE, 並 return 這些任務 ('未完成'及'已完成但
 # 未過期' 任務)
+# Note: 剛執行完任務還不會從TASKS_FILE中移除
+#
+# << 怪奇, 目前沒人呼叫此function>>
+#
 # ----------------------------------------------------------------------------
-def load_tasks():
+def load_tasks_DO_NOT_RUN():
     """
     載入任務列表，並清除tasks.json中過期的已完成任務。
     同時將訂票資訊格式化為 '左營 - 台南 (11-19 23:45)'
@@ -113,7 +198,7 @@ def load_tasks():
             data = task.get('data', {})
             start_station = data.get('start_station', '?')
             end_station = data.get('end_station', '?')
-            travel_date = data.get('travel_date', '????-??-??')
+            travel_date = data.get('travel_date', '????/??/??')
             train_time = data.get('train_time', '??:??')
             
             formatted_date = travel_date
@@ -266,41 +351,7 @@ def load_history():
         return retained_history
 
 
-# --- 核心配置與全局狀態 ---
-# 使用 timedelta 支援 Python 3.8
-CST_TIMEZONE = timezone(timedelta(hours=8))
-
-data_lock = threading.RLock()
-
-# --- 全局狀態新增 ---
-booking_thread: Optional[threading.Thread] = None
-current_running_task_id: Optional[str] = None
-
-# 載入上次的任務，並將所有 'running' 或 'cancelling' 狀態重設為 'failed'
-booking_tasks: List[Dict[str, Any]] = load_json(TASKS_FILE) 
-for task in booking_tasks:
-    if task['status'] == 'running' or task['status'] == 'cancelling':
-        task['status'] = 'failed'
-        task['message'] = '伺服器重啟，任務失敗或已中斷。'
-        task['update_time'] = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
-
-current_cancel_event: Optional[threading.Event] = None
-# --- 核心配置與全局狀態 (保持不變) ---
-
-app = Flask(__name__)
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
-
-# ----------------------------------------------------------------------------
-# 啟動背景 Worker 執行緒 (兼容 Gunicorn 和 python app.py)
-# ----------------------------------------------------------------------------
-# 必須在 app 實例化之後調用，並定義為一般函式
-def start_booking_worker_thread():
-    global booking_thread
-    with data_lock:
-        if booking_thread is None or not booking_thread.is_alive():
-            print(f"[{datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')}] 啟動背景訂票 worker 執行緒...")
-            booking_thread = threading.Thread(target=run_booking_worker, daemon=True)
-            booking_thread.start()
+# XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
 # ----------------------------------------------------------------------------
 # task_id format: YYYYMMDD-NN
@@ -362,7 +413,7 @@ def update_task_status(task_id: str, new_status: str, message: str):
             
             # 2. 立即歸檔到 history.json
             history_list = load_json(HISTORY_FILE)
-            
+
             # *** 修正 #2: 確保 history.json 包含 task 的所有頂層欄位 ***
             # 複製 task 的所有內容作為歷史紀錄的基礎
             history_entry = task.copy()
@@ -403,18 +454,17 @@ def run_booking_worker():
         
         # --- 階段 1: 檢查並取出任務 (Locked) ---
         with data_lock:
-            if current_running_task_id is not None:
-                # 已經有任務在跑
+            if current_running_task_id is not None:   # 已經有任務在跑
                 should_sleep = True 
                 # !!! 修正: 移除這裡的 time.sleep(1)
                 
-            else:
+            else:   # 沒有任務在跑
                 pending_tasks = [t for t in booking_tasks if t['status'] == 'pending']
                 if not pending_tasks:
                     # 沒有待處理任務
                     should_sleep = True 
                     # !!! 修正: 移除這裡的 time.sleep(1)
-                else:
+                else:   # [scott@2026-03-14] 有無機會改成, support multitask 在跑 (一次可以背景同時訂多張票)  (最底層訂票系統: 根據車次一次訂一張, 時間訂票需轉換成多張車次訂票)
                     # 取得並設置為 'running'
                     task_to_run = pending_tasks[0]
                     current_running_task_id = task_to_run['task_id']
@@ -434,15 +484,25 @@ def run_booking_worker():
             success = False
             result_msg = ""
             try:
-                # 執行訂票流程 (在鎖之外執行)
-                success, result_msg = booking.thsr_run_booking_flow_with_data( 
+                # 根據 USE_MOCK_BOOKING 旗標選擇訂票實作：
+                #   True  → booking.thsr_run_booking_flow_with_data (模擬版本)
+                #   False → proxy.thsr_run_booking_flow             (真實版本)
+                booking_fn = (
+                    booking.thsr_run_booking_flow_with_data
+                    if USE_MOCK_BOOKING
+                    else proxy.thsr_run_booking_flow
+                )
+
+                success, result_msg = booking_fn(
                     task_to_run['task_id'], 
                     task_to_run['data'], 
                     current_cancel_event,
                     update_task_status
                 )
+
+                # [scott@2026-03-12] final_status 不應該只有 'success' or 'failed', 應該有 '成功', '失敗', '放棄' or '中斷' & '不明原因'
                 final_status = 'success' if success else 'failed'
-                
+
             except Exception as e:
                 final_status = 'failed'
                 result_msg = f"執行錯誤: {e}"
@@ -554,6 +614,45 @@ def submit_booking():
         data['identity'] = passenger_info.get('identity')
         # --- END: 新增的安全性查找邏輯 ---
 
+        # --- START: 欄位正規化 (前端傳入值 → proxy.py 所需格式) ---
+
+        # 5a. travel_date: 統一轉為 'YYYY/MM/DD' (相容 'YYYY-MM-DD' 或已是 'YYYY/MM/DD')
+        raw_date = data.get('travel_date', '')
+        data['travel_date'] = raw_date.replace('-', '/')
+
+        # 5b. identity: 中文票種 → proxy.py IDENTITY_TO_TICKET_ROW key
+        IDENTITY_ZH_TO_EN = {
+            '一般':   'adult',
+            '孩童':   'child',
+            '愛心':   'disabled',
+            '敬老':   'elder',
+            '大學生': 'college',
+        }
+        raw_identity = data.get('identity', '')
+        data['identity'] = IDENTITY_ZH_TO_EN.get(raw_identity, 'adult')
+
+        # 5c. seat_class: 中文車廂種類 → class_type 整數
+        #     對應 proxy.py trainCon:trainRadioGroup: 0=標準, 1=商務, 2=自由座
+        SEAT_CLASS_ZH_TO_INT = {
+            '標準車廂': 0,
+            '商務車廂': 1,
+            '自由座':   2,
+        }
+        raw_seat_class = data.pop('seat_class', '')
+        data['class_type'] = SEAT_CLASS_ZH_TO_INT.get(raw_seat_class, 0)
+
+        # 5d. seat_option: 中文座位喜好 → seat_prefer 整數
+        #     對應 proxy.py seatCon:seatRadioGroup: 0=無, 1=靠窗, 2=走道
+        SEAT_OPTION_ZH_TO_INT = {
+            '無座位偏好': 0,
+            '靠窗優先':   1,
+            '走道優先':   2,
+        }
+        raw_seat_option = data.pop('seat_option', '')
+        data['seat_prefer'] = SEAT_OPTION_ZH_TO_INT.get(raw_seat_option, 0)
+
+        # --- END: 欄位正規化 ---
+
         task_id = get_new_task_id()
 
         current_time_cst = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
@@ -590,9 +689,9 @@ def submit_booking():
 @app.route("/api/status", methods=["GET"])
 @app.route("/api/get_tasks", methods=["GET"])
 def get_booking_status():
+    # with lock裡的動作, 盡量不要太久
     with data_lock:
-        tasks = list(booking_tasks)
-
+        tasks = list(booking_tasks) # 後續用tasks來處理, 就不用佔用booking_tasks太多時間
 
     # 每次前端請求狀態時，同時執行任務清理邏輯
     # tasks = load_tasks()
@@ -617,6 +716,9 @@ def get_booking_status():
 
     # print(YELLOW + f"status_list len = {len(status_list)}" + RESET)
     # print(status_list)
+
+    # 訂票任務狀態 (最新顯示在最上方)
+    status_list.reverse()   # [scott@2026-03-14] reverse list order
 
     return jsonify({
         "status": "success",
@@ -763,6 +865,9 @@ def history_page():
 if __name__ == "__main__":
 
     # 確保在直接執行 app.py 時啟動 worker
+    # [scott@2026-03-14] 是否應該移到最上面, 理由如下:
+    #     為了確保 Gunicorn worker 也啟動，請將 start_booking_worker_thread()
+    #     放在 app = Flask(__name__) 之後的頂層代碼區塊。
     start_booking_worker_thread()
 
     arg_parser = ArgumentParser(

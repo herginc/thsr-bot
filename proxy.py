@@ -1,6 +1,7 @@
 import logging
+import threading
 
-from typing import Mapping, Any, Optional, Union, List
+from typing import Mapping, Any, Optional, Union, List, Dict, Tuple
 
 from time import sleep
 import requests
@@ -291,7 +292,7 @@ def parse_booking_form_element_id(session: Session, page: str):
         logger.error(f"Unable to find element id {target_id}")
         return None
 
-    print(RED)
+    print(GREEN)
 
     print(f"captcha_image_url  = {booking_form['captcha_image_url']}")
     print(f"captcha_reload_url = {booking_form['captcha_reload_url']}")
@@ -546,49 +547,228 @@ def check_and_print_errors(html_content: Union[str, bytes]) -> bool:
         print(YELLOW + "✅ HTML 內容中未發現 'feedbackPanelERROR'，可能已成功進入下一步。" + RESET)
         return False
 
-def get_booking_data(passcode: str):
+# ----------------------------------------------------------------------------
+# 站名 → selectStartStation / selectDestinationStation value 對照表
+# 來源: booking_1st_page.html <select name="selectStartStation"> options
+# ----------------------------------------------------------------------------
+STATION_NAME_TO_ID: Dict[str, str] = {
+    '南港': '1',
+    '台北': '2',
+    '板橋': '3',
+    '桃園': '4',
+    '新竹': '5',
+    '苗栗': '6',
+    '台中': '7',
+    '彰化': '8',
+    '雲林': '9',
+    '嘉義': '10',
+    '台南': '11',
+    '左營': '12',
+}
 
-    booking_data = {}
-    booking_data['types_of_trip'] = 0
-    booking_data['class_type'] = 0
-    booking_data['seat_prefer'] = 0
-    booking_data['search_by'] = 'radio31'           # 最好不要hard-code
-    booking_data['start_station'] = 2
-    booking_data['dest_station'] = 3
-    booking_data['outbound_date'] = '2025/11/14'
-    booking_data['inbound_date'] = '2025/11/14'
-    booking_data['outbound_time'] = '1201A'         # 最好不要hard-code
-    booking_data['outbound_train_id'] = ""
-    booking_data['inbound_time'] = ''
-    booking_data['inbound_train_id'] = ""
-    booking_data['adult_ticket_num'] = '1F'
-    booking_data['child_ticket_num'] = '0H'
-    booking_data['disabled_ticket_num'] = '0W'
-    booking_data['elder_ticket_num'] = '0E'
-    booking_data['college_ticket_num'] = '0P'
-    booking_data['type_num'] = f"{booking_data['adult_ticket_num']},{booking_data['child_ticket_num']},{booking_data['disabled_ticket_num']},{booking_data['elder_ticket_num']},{booking_data['college_ticket_num']}"
+# ----------------------------------------------------------------------------
+# 出發時間 (HH:MM) → toTimeTable / backTimeTable option value 對照表
+# 來源: booking_1st_page.html <select name="toTimeTable"> options
+# 格式規則:
+#   午夜/凌晨 00:00 → 1201A,  00:30 → 1230A
+#   上午 05:00~11:30 → HHMMA  (e.g. 500A, 1130A)
+#   正午 12:00 → 1200N
+#   下午 12:30~23:30 → H(H)MMP  (e.g. 1230P, 100P, 1130P)
+# ----------------------------------------------------------------------------
+TIME_TO_TIMETABLE: Dict[str, str] = {
+    '00:00': '1201A', '00:30': '1230A',
+    '05:00': '500A',  '05:30': '530A',
+    '06:00': '600A',  '06:30': '630A',
+    '07:00': '700A',  '07:30': '730A',
+    '08:00': '800A',  '08:30': '830A',
+    '09:00': '900A',  '09:30': '930A',
+    '10:00': '1000A', '10:30': '1030A',
+    '11:00': '1100A', '11:30': '1130A',
+    '12:00': '1200N',
+    '12:30': '1230P',
+    '13:00': '100P',  '13:30': '130P',
+    '14:00': '200P',  '14:30': '230P',
+    '15:00': '300P',  '15:30': '330P',
+    '16:00': '400P',  '16:30': '430P',
+    '17:00': '500P',  '17:30': '530P',
+    '18:00': '600P',  '18:30': '630P',
+    '19:00': '700P',  '19:30': '730P',
+    '20:00': '800P',  '20:30': '830P',
+    '21:00': '900P',  '21:30': '930P',
+    '22:00': '1000P', '22:30': '1030P',
+    '23:00': '1100P', '23:30': '1130P',
+}
+
+# ----------------------------------------------------------------------------
+# 票種 identity → (suffix, row_index)
+# 對應 task_data['identity'] 欄位與 HTML ticketPanel rows
+# ----------------------------------------------------------------------------
+# ticketPanel:rows:0:ticketAmount → 全票    suffix F
+# ticketPanel:rows:1:ticketAmount → 孩童票  suffix H
+# ticketPanel:rows:2:ticketAmount → 愛心票  suffix W
+# ticketPanel:rows:3:ticketAmount → 敬老票  suffix E
+# ticketPanel:rows:4:ticketAmount → 大學生票 suffix P
+IDENTITY_TO_TICKET_ROW: Dict[str, tuple] = {
+    'adult':    ('F', 0),
+    'child':    ('H', 1),
+    'disabled': ('W', 2),
+    'elder':    ('E', 3),
+    'college':  ('P', 4),
+}
+
+def _resolve_station_id(name: str) -> str:
+    """將中文站名轉換為表單 value，找不到時 raise ValueError。"""
+    station_id = STATION_NAME_TO_ID.get(name)
+    if station_id is None:
+        raise ValueError(f"未知的站名: '{name}'。支援站名: {list(STATION_NAME_TO_ID.keys())}")
+    return station_id
+
+def _resolve_timetable_value(hhmm: str) -> str:
+    """
+    將 'HH:MM' 字串轉換為 toTimeTable option value。
+    若找不到精確對應，則找最近的半小時時段 (無條件進位至下一個整點或半點)。
+    """
+    value = TIME_TO_TIMETABLE.get(hhmm)
+    if value:
+        return value
+
+    # 找不到精確時間 → 找最接近且 >= 輸入時間的選項
+    try:
+        h, m = map(int, hhmm.split(':'))
+        input_minutes = h * 60 + m
+    except (ValueError, AttributeError):
+        raise ValueError(f"時間格式錯誤: '{hhmm}'，請使用 'HH:MM' 格式 (e.g. '09:00')")
+
+    # 建立 {分鐘數: option_value} 的對照，找最小的 >= input_minutes
+    minute_map = {}
+    for t, v in TIME_TO_TIMETABLE.items():
+        th, tm = map(int, t.split(':'))
+        minute_map[th * 60 + tm] = v
+
+    candidates = [(mins, v) for mins, v in minute_map.items() if mins >= input_minutes]
+    if candidates:
+        best = min(candidates, key=lambda x: x[0])
+        logger.warning(f"時間 '{hhmm}' 無精確對應，使用最近的後續時段: '{best[1]}'")
+        return best[1]
+
+    # 已超過最後一班 (23:30) → 使用最後一個時段
+    last = max(minute_map.items(), key=lambda x: x[0])
+    logger.warning(f"時間 '{hhmm}' 超出可選範圍，使用最後時段: '{last[1]}'")
+    return last[1]
+
+def _build_ticket_amounts(identity: str, count: int = 1) -> Dict[str, str]:
+    """
+    根據 identity 和張數，回傳 5 個票種的 form 欄位 dict。
+    指定票種設為 count，其餘為 0。
+    """
+    defaults = {'F': 0, 'H': 0, 'W': 0, 'E': 0, 'P': 0}
+
+    row_info = IDENTITY_TO_TICKET_ROW.get(identity)
+    if row_info is None:
+        logger.warning(f"未知的 identity '{identity}'，預設使用全票 (adult)。")
+        row_info = IDENTITY_TO_TICKET_ROW['adult']
+
+    suffix, _ = row_info
+    defaults[suffix] = count
+
+    amounts = {
+        'F': f"{defaults['F']}F",
+        'H': f"{defaults['H']}H",
+        'W': f"{defaults['W']}W",
+        'E': f"{defaults['E']}E",
+        'P': f"{defaults['P']}P",
+    }
+    return amounts
+
+
+def get_booking_data(passcode: str, task_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    根據 task_data 動態產生高鐵訂票表單所需的 form_data。
+
+    task_data 預期欄位:
+        start_station   (str) : 出發站中文名，例如 '台北'
+        end_station     (str) : 到達站中文名，例如 '左營'
+        travel_date     (str) : 出發日期，格式 'YYYY/MM/DD'
+        train_time      (str) : 出發時間，格式 'HH:MM'
+        identity        (str) : 票種，可選 adult/child/disabled/elder/college (預設 adult)
+        ticket_count    (int) : 張數 (預設 1)
+        class_type      (int) : 車廂種類，0=標準對號座, 1=商務對號座, 2=自由座 (預設 0)
+        seat_prefer     (int) : 座位喜好，0=無, 1=靠窗優先, 2=走道優先 (預設 0)
+        train_no        (str) : 指定車次號碼 (若有值則 search_by 切換為 radio33 車次模式)
+
+    回傳:
+        Dict[str, Any]: 可直接用於 requests.post(data=...) 的表單資料。
+    """
+
+    print(YELLOW)
+    print('-' * 70)
+    print(task_data)
+    print('-' * 70)
+    print(RESET)
+
+    # --- 站名 → station ID ---
+    start_station_id = _resolve_station_id(task_data.get('start_station', ''))
+    end_station_id   = _resolve_station_id(task_data.get('end_station', ''))
+
+    # --- 日期 (直接使用，格式 YYYY/MM/DD) ---
+    travel_date = task_data.get('travel_date', '')
+    if not travel_date:
+        raise ValueError("task_data 缺少 'travel_date' 欄位")
+
+    # --- 搜尋方式 & 時間/車次 ---
+    train_no = task_data.get('train_no', '').strip()
+    if train_no:
+        # 車次模式
+        search_by        = 'radio33'
+        outbound_time    = ''
+        outbound_train_id = train_no
+    else:
+        # 時間模式
+        search_by         = 'radio31'
+        outbound_time     = _resolve_timetable_value(task_data.get('train_time', ''))
+        outbound_train_id = ''
+
+    # --- 票種與張數 ---
+    identity     = task_data.get('identity', 'adult')
+    ticket_count = int(task_data.get('ticket_count', 1))
+    amounts      = _build_ticket_amounts(identity, ticket_count)
+
+    # ticketTypeNum: 逗號分隔的 5 種票量字串 (順序: F,H,W,E,P)
+    ticket_type_num = f"{amounts['F']},{amounts['H']},{amounts['W']},{amounts['E']},{amounts['P']}"
+
+    # --- 車廂種類 & 座位喜好 ---
+    class_type  = int(task_data.get('class_type', 0))   # 0=標準, 1=商務, 2=自由座
+    seat_prefer = int(task_data.get('seat_prefer', 0))  # 0=無, 1=靠窗, 2=走道
+
+    logger.info(
+        f"get_booking_data: {task_data.get('start_station')}({start_station_id})"
+        f" → {task_data.get('end_station')}({end_station_id})"
+        f" | {travel_date} {task_data.get('train_time','')} ({outbound_time})"
+        f" | identity={identity} count={ticket_count}"
+        f" | class={class_type} seat={seat_prefer}"
+    )
 
     form_data = {
-        "BookingS1Form:hf:0": "",
-        "tripCon:typesoftrip": booking_data['types_of_trip'],
-        "trainCon:trainRadioGroup": booking_data['class_type'],
-        "seatCon:seatRadioGroup": booking_data['seat_prefer'],
-        "bookingMethod": booking_data['search_by'],
-        "selectStartStation": booking_data['start_station'],
-        "selectDestinationStation": booking_data['dest_station'],
-        "toTimeInputField": booking_data['outbound_date'],
-        "backTimeInputField": booking_data['inbound_date'],
-        "toTimeTable": booking_data['outbound_time'],
-        "toTrainIDInputField": booking_data['outbound_train_id'],
-        "backTimeTable": booking_data['inbound_time'],
-        "backTrainIDInputField": booking_data['inbound_train_id'],
-        "ticketPanel:rows:0:ticketAmount": booking_data['adult_ticket_num'],
-        "ticketPanel:rows:1:ticketAmount": booking_data['child_ticket_num'],
-        "ticketPanel:rows:2:ticketAmount": booking_data['disabled_ticket_num'],
-        "ticketPanel:rows:3:ticketAmount": booking_data['elder_ticket_num'],
-        "ticketPanel:rows:4:ticketAmount": booking_data['college_ticket_num'],
-        "ticketTypeNum": booking_data['type_num'],
-        "homeCaptcha:securityCode": passcode,
+        "BookingS1Form:hf:0":               "",
+        "tripCon:typesoftrip":              0,          # 0=單程 (去回程不在此系統範圍內)
+        "trainCon:trainRadioGroup":         class_type,
+        "seatCon:seatRadioGroup":           seat_prefer,
+        "bookingMethod":                    search_by,
+        "selectStartStation":               start_station_id,
+        "selectDestinationStation":         end_station_id,
+        "toTimeInputField":                 travel_date,
+        "backTimeInputField":               travel_date, # 單程時與去程同日，不影響結果
+        "toTimeTable":                      outbound_time,
+        "toTrainIDInputField":              outbound_train_id,
+        "backTimeTable":                    '',
+        "backTrainIDInputField":            '',
+        "ticketPanel:rows:0:ticketAmount":  amounts['F'],
+        "ticketPanel:rows:1:ticketAmount":  amounts['H'],
+        "ticketPanel:rows:2:ticketAmount":  amounts['W'],
+        "ticketPanel:rows:3:ticketAmount":  amounts['E'],
+        "ticketPanel:rows:4:ticketAmount":  amounts['P'],
+        "ticketTypeNum":                    ticket_type_num,
+        "homeCaptcha:securityCode":         passcode,
     }
 
     return form_data
@@ -597,7 +777,7 @@ def get_booking_data(passcode: str):
 # Submit Booking Form
 # ----------------------------------------------------------------------------
 
-def thsr_submit_booking_form(session: Session, page: str, url_path: str, passcode: str) -> str:
+def thsr_submit_booking_form(session: Session, page: str, url_path: str, passcode: str, task_data: Dict[str, Any]) -> str:
     page = None
 
     submit_url = BASE_URL + url_path
@@ -631,7 +811,7 @@ def thsr_submit_booking_form(session: Session, page: str, url_path: str, passcod
         "Accept-Encoding": ACCEPT_ENCODING
     }
 
-    form_data = get_booking_data(passcode)
+    form_data = get_booking_data(passcode, task_data)
 
     try:
         # Measure time just for the request (ms, integer)
@@ -1063,146 +1243,202 @@ def thsr_load_booking_page(session: Session) -> str:
 # Main THSR Booking System
 # ----------------------------------------------------------------------------
 
-def thsr_run_booking_flow():
+def thsr_run_booking_flow(
+    task_id: str,
+    task_data: Dict[str, Any],
+    cancel_event: threading.Event,
+    status_updater: callable
+) -> Tuple[bool, str]:
+    """
+    執行高鐵訂票流程 (真實版本)。
+    與 booking.thsr_run_booking_flow_with_data 擁有相同的 interface。
 
-    session = session_init()
-    page = thsr_load_booking_page(session)
+    Args:
+        task_id:        任務唯一識別碼。
+        task_data:      訂票所需資料 (start_station, end_station, travel_date, train_time,
+                        name, personal_id, phone_num, email, identity ...)。
+        cancel_event:   threading.Event，由外部設定 (set()) 以中止任務。
+        status_updater: callable(task_id, status, message)，用於回報進度給呼叫者。
 
-    if not page:
-        logger.error("Unable to load the ticket booking page; process terminated.")
-        return
+    Returns:
+        Tuple[bool, str]: (成功與否, 結果訊息)
+    """
 
-    run = True
+    global booking_OK, booking_NG
 
-    n = 0
+    logger.info(
+        f"Task {task_id} received. "
+        f"Passenger: {task_data.get('name', 'N/A')} | "
+        f"Route: {task_data.get('start_station', '?')} to {task_data.get('end_station', '?')}"
+    )
+    status_updater(task_id, 'running', '開始初始化 Session...')
 
-    # while (run):
-    if (1):
+    t0 = time.perf_counter()
+    booking_success = False
+    result_message = ""
 
-        # sleep_range(1, 2)
+    try:
+        # ------------------------------------------------------------------
+        # 步驟 0: 取消檢查
+        # ------------------------------------------------------------------
+        if cancel_event.is_set():
+            raise Exception("取消排隊中任務")
+
+        # ------------------------------------------------------------------
+        # 步驟 1: 初始化 Session
+        # ------------------------------------------------------------------
+        session = session_init()
+        if not session:
+            raise Exception("Session 初始化失敗。")
+        status_updater(task_id, 'running', 'Session 初始化成功。載入訂票頁面中...')
+
+        # ------------------------------------------------------------------
+        # 步驟 2: 載入訂票首頁
+        # ------------------------------------------------------------------
+        if cancel_event.is_set():
+            raise Exception("取消排隊中任務")
+
+        page = thsr_load_booking_page(session)
+        if not page:
+            raise Exception("Unable to load the ticket booking page; process terminated.")
+        status_updater(task_id, 'running', '訂票頁面載入成功。解析表單元素中...')
+
+        # ------------------------------------------------------------------
+        # 步驟 3: 解析表單元素 ID
+        # ------------------------------------------------------------------
+        if cancel_event.is_set():
+            raise Exception("取消運行中任務")
 
         booking_form = parse_booking_form_element_id(session, page)
-
-        # captcha_passcode_url, captcha_reload_url = get_captcha_src(page) # page.decode('utf-8')
-
-        if (booking_form == None):
-            logger.error("ERROR: booking page is something wrong")
-            return
+        if booking_form is None:
+            raise Exception("訂票頁面解析失敗，表單結構異常。")
 
         captcha_passcode_url    = booking_form['captcha_image_url']
-        captcha_reload_url      = booking_form['captcha_reload_url']
-        booking_form_submit_url = booking_form['booking_submit_url']         
+        captcha_reload_url      = booking_form['captcha_reload_url']    # noqa: F841
+        booking_form_submit_url = booking_form['booking_submit_url']
+        status_updater(task_id, 'running', '表單元素解析成功。下載驗證碼圖片中...')
 
-        # captcha_passcode_url    = BASE_URL + booking_form['captcha_image_url']
-        # captcha_reload_url      = BASE_URL + booking_form['captcha_reload_url']
-        # booking_form_submit_url = BASE_URL + booking_form['booking_submit_url']         
+        # ------------------------------------------------------------------
+        # 步驟 4: 下載驗證碼並識別
+        # ------------------------------------------------------------------
+        if cancel_event.is_set():
+            raise Exception("取消運行中任務")
 
-        sleep_range(0, 1)
-
-        if (captcha_passcode_url):
+        passcode = None
+        if captcha_passcode_url:
             logger.info("--- Download Captcha Image ---")
-            passcode = save_captcha_image(session, captcha_passcode_url)            
-        else:
-            pass  # TBD
+            sleep_range(0, 1)
+            passcode = save_captcha_image(session, captcha_passcode_url)
+        
+        if not passcode:
+            raise Exception("驗證碼取得或識別失敗。")
+        
+        logger.info(YELLOW + f"passcode = {passcode}" + RESET)
+        status_updater(task_id, 'running', f'驗證碼識別成功。提交訂票表單中...')
 
-        if (passcode):
-            logger.info(YELLOW + f"passcode = {passcode}" + RESET)
-            sleep_range(2, 3)
-            page = thsr_submit_booking_form(session, page, booking_form_submit_url, passcode)
-        else:
-            logger.info(YELLOW + "passcode is empty" + RESET)
+        # ------------------------------------------------------------------
+        # 步驟 5: 提交訂票表單 (第一頁)
+        # ------------------------------------------------------------------
+        if cancel_event.is_set():
+            raise Exception("取消運行中任務")
+
+        sleep_range(2, 3)
+        page = thsr_submit_booking_form(session, page, booking_form_submit_url, passcode, task_data)
 
         is_error_found = check_and_print_errors(page)
+        if is_error_found:
+            # 驗證碼錯誤或表單錯誤，本輪失敗 (呼叫端的 while loop 可決定是否重試)
+            result_message = "訂票表單提交失敗：驗證碼錯誤或欄位有誤。"     # [scott@2026-03-15] 直接使用Server回覆的訊息 (無 '欄位有誤')
+            booking_NG += 1
+            return False, result_message
 
-        # if (is_error_found and captcha_passcode_url):
-        #     logger.info("<<< Download Captcha Image >>>")
-        #     passcode = save_captcha_image(session, captcha_passcode_url)            
-        # else:
-        #     pass  # TBD
+        status_updater(task_id, 'running', '表單提交成功。選擇車次中...')
 
-        run = is_error_found
+        if SAVE_BOOKING_PAGE:
+            filename = "booking_2nd_page.html"
+            with open(filename, "w", encoding="utf-8") as file:
+                file.write(page)
+            logger.info(f"HTML content saved to {filename}")
 
-        if (is_error_found == False):
-            if (SAVE_BOOKING_PAGE):
-                filename = "booking_2nd_page.html"
-                with open(filename, "w", encoding="utf-8") as file:
-                    # file.write(response.text)
-                    file.write(page)
-                logger.info(f"HTML content saved to {filename}")
-            
-            # translate booking data here
+        # ------------------------------------------------------------------
+        # 步驟 6: 選擇車次並取得提交資料
+        # ------------------------------------------------------------------
+        if cancel_event.is_set():
+            raise Exception("取消運行中任務")
 
-            if (0):
-                print("--- Search by Train Code ---")
-                target_codes = ['9999', '1537', '803'] # 9999 不存在
-                result_code = select_train_and_submit(page, '車次', target_codes)
-                print(f"Result: {result_code}\n")
-            else:
-                print("--- Search by Time (Nearest after target) ---")
-                target_times = ['15:44', '13:46', '06:21']
-                submission_info = select_train_and_submit(page, '時間', target_times)
-                # submission_info = select_train_and_get_submission_data(page_content, '車次', target_list_code)
-                # print(f"Result: {result_time}\n")
+        train_time = task_data.get('train_time', '')
+        target_times = [train_time] if train_time else []
 
-            if 'error' in submission_info:
-                print(f"Submission failed: {submission_info['error']}")
-            else:
-                submission_url = submission_info['url']
-                submission_data = submission_info['data']
-                
-                print("\n--- Next Step: POST Request ---")
-                print(f"POST URL: {submission_url}")
-                print(f"POST Data: {submission_data}")
-                
-                # 實際的 POST 請求 (你需要執行這部分程式碼)
-                try:                    
-                    response = session.post(BASE_URL + submission_url, headers=http_headers, data=submission_data, allow_redirects=True, timeout=http_timeout)
-                    print("POST Request sent successfully.")
-                    # 處理下一頁的內容 post_response.text
+        submission_info = select_train_and_submit(page, '時間', target_times)
 
-                    if (SAVE_BOOKING_PAGE):
-                        filename = "booking_3rd_page.html"
-                        with open(filename, "w", encoding="utf-8") as file:
-                            file.write(response.text)
-                            # file.write(page)
-                        logger.info(f"HTML content saved to {filename}")
+        if 'error' in submission_info:
+            result_message = f"選車失敗：{submission_info['error']}"
+            booking_NG += 1
+            return False, result_message
 
+        submission_url  = submission_info['url']
+        submission_data = submission_info['data']
+        status_updater(task_id, 'running', f'車次選擇完成。送出訂位請求中...')
 
-                except requests.exceptions.RequestException as e:
-                    print(f"An error occurred during POST request: {e}")
-                    print(submission_info)
+        # ------------------------------------------------------------------
+        # 步驟 7: POST 送出訂位
+        # ------------------------------------------------------------------
+        if cancel_event.is_set():
+            raise Exception("取消運行中任務")
 
+        response = session.post(
+            BASE_URL + submission_url,
+            headers=http_headers,
+            data=submission_data,
+            allow_redirects=True,
+            timeout=http_timeout
+        )
+        response.raise_for_status()
 
-            return True
+        if SAVE_BOOKING_PAGE:
+            filename = "booking_3rd_page.html"
+            with open(filename, "w", encoding="utf-8") as file:
+                file.write(response.text)
+            logger.info(f"HTML content saved to {filename}")
 
+        # ------------------------------------------------------------------
+        # 步驟 8: 解析訂位代號
+        # ------------------------------------------------------------------
+        # 嘗試從回應頁面中解析訂位代號
+        booking_code_match = re.search(r'訂位代號[：:]\s*([A-Z0-9]{4,10})', response.text)
+        if booking_code_match:
+            booking_code = booking_code_match.group(1)
+            result_message = f"訂位代號: {booking_code}"
+            booking_success = True
+            booking_OK += 1
+            status_updater(task_id, 'running', f'訂位成功！{result_message}')
+        else:
+            result_message = "訂位請求已送出，但未能解析訂位代號，請至官網確認。"
+            booking_success = True   # 請求成功送達，視為成功
+            booking_OK += 1
+            status_updater(task_id, 'running', result_message)
 
+        return booking_success, result_message
 
+    except Exception as e:
+        err_str = str(e)
 
-        # run = False
+        if "取消" in err_str:
+            result_message = err_str
+            return False, result_message
 
-        # return is_error_found
+        booking_NG += 1
+        result_message = f"訂票流程中斷: {e}"
+        logger.error(f"Task {task_id} execution failed: {e}")
+        return False, result_message
 
-        n = n + 1
-
-        if (n > 2):
-            run = False
-
-
-        # booking_form = parse_booking_form_element_id(session, page)
-
-        # sleep_range(2, 3)
-
-        # logger.info("--- Reload Captcha Image ---")
-
-        # if (captcha_reload_url):
-        #     # reload captcha image by clicking 'regenerate' button
-        #     if not reload_captcha_image(session, captcha_reload_url):
-        #         logger.error("Failed to reload captcha image")
-        #         return
-        # else:
-        #     pass  # TBD
-
-    return False
+    finally:
+        t1 = time.perf_counter() - t0
+        logger.info(
+            f"{YELLOW}Task {task_id} finished. "
+            f"Total run time = {t1:.2f}s. "
+            f"booking_success: {booking_success}{RESET}"
+        )
 
 
 
@@ -1214,33 +1450,53 @@ logger = logging.getLogger(__name__)
 
 def main():
     # logging.basicConfig(filename='myapp.log', level=logging.INFO)
-
-    # 定義輸出格式
-    # FORMAT = '[%(asctime)s][%(filename)s][%(levelname)s]: %(message)s'
     FORMAT = '[%(asctime)s][%(levelname)s][%(funcName)s]: %(message)s'
-    # Logging初始設定 + 上定義輸出格式
     logging.basicConfig(level=logging.INFO, format=FORMAT)
 
     logger.info('Started')
 
-    max_run = 5
+    # 模擬 task_data (與 app.py 的 submit 格式一致)
+    mock_task_data = {
+        'start_station': '台北',
+        'end_station': '左營',
+        'travel_date': '2026/03/31',
+        'train_time': '12:00',
+        'name': 'Standalone User',
+        'personal_id': 'A123456789',
+    }
 
-    n = 0
+    def cli_status_updater(task_id, status, message):
+        print(f"[STATUS UPDATE] Task {task_id} - {status.upper()}: {message}")
+
+    task_id    = "PROXY-STANDALONE-001"
+    cancel_event = threading.Event()
+    max_run    = 5
+    n          = 0
 
     t0 = time.perf_counter()
 
+    while n < max_run:
+        n += 1
+        print(f"\n--- Running Booking Flow (proxy), Run {n}/{max_run} ---")
 
-    while (n < max_run):
-        v = thsr_run_booking_flow()
-        n = n + 1
-        if (v == True):
+        success, result_msg = thsr_run_booking_flow(
+            task_id=f"{task_id}-{n}",
+            task_data=mock_task_data,
+            cancel_event=cancel_event,
+            status_updater=cli_status_updater
+        )
+
+        if success:
+            print(f"\n{GREEN}✅ Booking succeeded!{RESET} Message: {result_msg}")
             break
+        else:
+            print(f"\n{RED}❌ Booking failed.{RESET} Message: {result_msg}")
 
-    t1 = int(round((time.perf_counter() - t0) * 1000.0))  # ms, integer
-    t2 = t1 / n
+    t1 = int(round((time.perf_counter() - t0) * 1000.0))
+    t2 = t1 / n if n else 0
 
     print(f"all run time = {t1}ms")
-    print(f"avg run time = {t2}ms")
+    print(f"avg run time = {t2:.1f}ms")
     print(f"booking_OK   = {booking_OK}")
     print(f"booking_NG   = {booking_NG}")
 

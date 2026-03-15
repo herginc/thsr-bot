@@ -11,14 +11,32 @@ The program will be developed and tested in the following environments.
 
 ### Back-End Server:
 
-1) Microsoft Windows 7
-   - only support local browser
+1) Microsoft Windows 7 (for local development purpose)
+   - support local browser only
    ```
    Python: 3.8.10
    $ python app.py
    ```
 
-2) Github codespaces (2026-03-05)
+2) Ubuntu 24.04 TLS (2026-03-14)
+   ```
+   # Clone thsr-bot repo：
+   $ git clone https://github.com/herginc/thsr-bot.git
+
+
+   # Install basic packages
+   $ sudo apt update
+   $ sudo apt install python3 python3-pip python3-venv python-is-python3
+   # pip install --upgrade pip
+   
+   # Create Python virtual environment
+   $ cd ~/thsr-bot
+   $ python -m venv venv
+   $ source venv/bin/activate
+   (venv) ~/thsr-bot$
+   ```
+
+3) Github codespaces (2026-03-05)
    ```
    Python: 3.12.1
    $ source clean_build.sh
@@ -28,7 +46,7 @@ The program will be developed and tested in the following environments.
    $ gunicorn --bind 0.0.0.0:8000 app:app (網頁下單後, Server並沒有處理訂單)
    ```
 
-3) CS50 codespaces (2026-03-09)
+4) CS50 codespaces (2026-03-09)
    ```
    Python: 3.13.11
    $ source clean_build.sh
@@ -39,7 +57,7 @@ The program will be developed and tested in the following environments.
    $ gunicorn --bind 0.0.0.0:8000 app:app (網頁出不來)
    ```
 
-4) Google Cloud VM - Ubuntu 24.04 TLS
+5) Google Cloud VM - Ubuntu 24.04 TLS
    ```
    Linux 6.8.10 + Python 3.10.12
    $ gunicorn --bind 0.0.0.0:8000 app:app

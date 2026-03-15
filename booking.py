@@ -65,6 +65,13 @@ FORMAT = '[%(asctime)s][%(levelname)s][%(funcName)s]: %(message)s'
 logging.basicConfig(level=logging.INFO, format=FORMAT)
 
 
+# ----------------------------------------------------------------------------
+# As is:
+#     return 只有 True or False
+# To be:
+#     return 可以有 '成功', '失敗', '放棄' or '中斷'
+# ----------------------------------------------------------------------------
+
 def thsr_run_booking_flow_with_data(
     task_id: str, 
     task_data: Dict[str, Any], 
@@ -137,6 +144,7 @@ def thsr_run_booking_flow_with_data(
             else:
                 result_message = f"模擬網路請求及資料處理..."
 
+            # [scott@2026-03-12] update status
             status_updater(task_id, 'running', f"步驟 {step}/{total_steps}: (延遲 {step_delay:.2f}s) {result_message}")
             
             if booking_success:
@@ -147,20 +155,25 @@ def thsr_run_booking_flow_with_data(
             booking_OK += 1
             final_msg = result_message
             return True, final_msg
+            # return '成功', final_msg
         else:
             booking_NG += 1
             return False, result_message
+            # return '??', result_message  # not final msg, so 不是 '失敗'
+            # return '失敗', result_message  # 已經是final結束, 上面for loop 已結束
 
 
     except Exception as e:
         if "被使用者取消" in str(e):
             result_message = str(e)
             return False, result_message
+            # return '放棄', result_message
             
         booking_NG += 1
         result_message = f"訂票流程中斷: {e}"
         logger.error(f"Task {task_id} execution failed: {e}")
         return False, result_message
+        # return '不明原因', result_message
     
     finally:
         t1 = time.perf_counter() - t0
