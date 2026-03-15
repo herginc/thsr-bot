@@ -1371,8 +1371,8 @@ def thsr_run_booking_flow(
 
         submission_info = select_train_and_submit(page, '時間', target_times)
 
-        if 'error' in submission_info:
-            result_message = f"選車失敗：{submission_info['error']}"
+        if not isinstance(submission_info, dict):
+            result_message = f"選車失敗：{submission_info}"
             booking_NG += 1
             return False, result_message
 
