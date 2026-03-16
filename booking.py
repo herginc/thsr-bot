@@ -164,7 +164,8 @@ def thsr_run_booking_flow_with_data(
 
 
     except Exception as e:
-        if "被使用者取消" in str(e):
+        # if "被使用者取消" in str(e):
+        if "取消" in str(e):
             result_message = str(e)
             return False, result_message
             # return '放棄', result_message

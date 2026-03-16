@@ -1,6 +1,6 @@
 # THSR-Bot
 
-Use [Flask](http://flask.pocoo.org/) to parse HTTP POST messages from websites or line-bot (webhook) and process them.
+Use Python [Flask](http://flask.pocoo.org/) to parse HTTP POST messages from a browser or line-bot (webhook) and process them.
 
 Keywords: [Flask](http://flask.pocoo.org/), [Flask Source](https://github.com/pallets/flask)
 

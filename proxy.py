@@ -127,7 +127,7 @@ def get_captcha_value(image_bytes):
     print(YELLOW + f"Get captcha value '{captcha_value}'" + RESET)
     return captcha_value
 
-def save_captcha_image(session: Session, img_src: str, file_path: str = None) -> bool:
+def save_and_parse_captcha_image(session: Session, img_src: str, file_path: str = None) -> bool:
     if file_path is None:
         file_path = os.path.join(OUTPUT_DIR, "captcha_downloaded.png")
     """
@@ -148,7 +148,7 @@ def save_captcha_image(session: Session, img_src: str, file_path: str = None) ->
     # 使用 global 變數 BASE_URL 與相對路徑組合，形成完整的 URL
     img_full_url = BASE_URL + img_src
 
-    logger.info(CYAN + f"Try to get image from: {img_full_url}" + RESET)
+    # logger.info(CYAN + f"Try to get image from: {img_full_url}" + RESET)
 
     captcha_value = None
 
@@ -160,7 +160,7 @@ def save_captcha_image(session: Session, img_src: str, file_path: str = None) ->
         # 檢查 HTTP 狀態碼 (例如 200 OK, 404 Not Found 等)
         response.raise_for_status() # 如果狀態碼不是 200，會拋出 HTTPError
 
-        print("-------------- OK --------------")
+        # print("-------------- OK --------------")
         logger.info(f"Downloaded captcha image successfully")
 
         # cookies = response.json().get('cookies')
@@ -187,7 +187,7 @@ def save_captcha_image(session: Session, img_src: str, file_path: str = None) ->
         captcha_value = ocr.classification(captcha_image_bytes)
         # print(response.content)
         # captcha_value = '1234'
-        print(YELLOW + f"Get captcha value '{captcha_value}'" + RESET)
+        # print(YELLOW + f"Get captcha value '{captcha_value}'" + RESET)
 
 
     except requests.exceptions.HTTPError as e:
@@ -527,7 +527,7 @@ def check_and_print_errors(html_content: Union[str, bytes]) -> bool:
     
     if error_elements:
         booking_NG = booking_NG + 1
-        print(f"\n{RED}{BOLD}======= 🚨 提交錯誤訊息：======= {RESET}")
+        print(f"\n{RED}{BOLD}======= 提交錯誤訊息：======= {RESET}")
         
         # 為了避免重複印出 (因為 <ul> 和 <span> 都帶有這個 class)，
         # 我們通常只提取最小範圍的元素（即 <span> 或 <li>）的內容。
@@ -546,14 +546,18 @@ def check_and_print_errors(html_content: Union[str, bytes]) -> bool:
                 unique_errors.add(error_text)
                 
         for error in sorted(list(unique_errors)):
-            print(f"{RED}🚫 {error}{RESET}")
+            print(f"{RED}{error}{RESET}")
             
         print(f"{RED}{BOLD}==================================={RESET}\n")
-        return True
+        return True, unique_errors
     else:
         booking_OK = booking_OK + 1
-        print(YELLOW + "✅ HTML 內容中未發現 'feedbackPanelERROR'，可能已成功進入下一步。" + RESET)
-        return False
+        print(YELLOW)
+        print('-' * 80)
+        print("✅ HTML 內容中未發現 'feedbackPanelERROR'，可能已成功進入下一步。")
+        print('-' * 80)
+        print(RESET)
+        return False, None
 
 # ----------------------------------------------------------------------------
 # 站名 → selectStartStation / selectDestinationStation value 對照表
@@ -1187,7 +1191,7 @@ def thsr_run_booking_flow(
         if captcha_passcode_url:
             logger.info("--- Download Captcha Image ---")
             sleep_range(0, 1)
-            passcode = save_captcha_image(session, captcha_passcode_url)
+            passcode = save_and_parse_captcha_image(session, captcha_passcode_url)
         
         if not passcode:
             raise Exception("驗證碼取得或識別失敗。")
@@ -1204,10 +1208,12 @@ def thsr_run_booking_flow(
         sleep_range(2, 3)
         page = thsr_submit_booking_form(session, page, booking_form_submit_url, passcode, task_data)
 
-        is_error_found = check_and_print_errors(page)
+        is_error_found, errmsg_set = check_and_print_errors(page)
         if is_error_found:
             # 驗證碼錯誤或表單錯誤，本輪失敗 (呼叫端的 while loop 可決定是否重試)
-            result_message = "訂票表單提交失敗：驗證碼錯誤或欄位有誤。"     # [scott@2026-03-15] 直接使用Server回覆的訊息 (無 '欄位有誤')
+            # result_message = "訂票表單提交失敗：驗證碼錯誤或欄位有誤。"     # [scott@2026-03-15] 直接使用Server回覆的訊息 (無 '欄位有誤')
+            errmsg_str = str(errmsg_set)
+            result_message = errmsg_str    # [scott@2026-03-16] should translate errmsg_list to errmsg_str
             booking_NG += 1
             return False, result_message
 
@@ -1305,6 +1311,7 @@ def thsr_run_booking_flow(
             f"Total run time = {t1:.2f}s. "
             f"booking_success: {booking_success}{RESET}"
         )
+        print('-' * 80)
 
 
 

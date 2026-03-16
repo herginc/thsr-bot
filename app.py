@@ -29,8 +29,8 @@ import logging
 # True  → 使用 booking.thsr_run_booking_flow_with_data (模擬版本，用於開發/測試)
 # False → 使用 proxy.thsr_run_booking_flow             (真實版本，連接高鐵官網)
 # ----------------------------------------------------------------------------
-# USE_MOCK_BOOKING = True
-USE_MOCK_BOOKING = False
+USE_MOCK_BOOKING = True
+# USE_MOCK_BOOKING = False
 
 
 # ----------------------------------------------------------------------------
@@ -191,7 +191,7 @@ def load_tasks_DO_NOT_RUN():
         
         booking_tasks = load_json(TASKS_FILE) # 由以上代碼取代
         
-        FINAL_STATUSES = ['success', 'failed', 'cancelled']
+        FINAL_STATUSES = ['success', 'failed', 'cancelled', 'aborted']
         retained_tasks = []
         now_cst = datetime.now(CST_TIMEZONE)
         
@@ -315,7 +315,7 @@ def load_history():
                     data = h.get('data', {})
                     
                     # 1. 訂票結果
-                    h['result_text'] = {'success': '成功', 'failed': '失敗', 'cancelled': '取消'}.get(h.get('result', ''), '未知')
+                    h['result_text'] = {'success': '成功', 'failed': '失敗', 'cancelled': '取消', 'aborted': '放棄'}.get(h.get('result', ''), '未知')
                     
                     # 2. 訂票時間 (finish_time)
                     h['formatted_order_date'] = finish_datetime.strftime('%Y/%m/%d %H:%M:%S')
@@ -396,7 +396,7 @@ def get_task_by_id(task_id: str) -> Optional[Dict[str, Any]]:
 
 # ----------------------------------------------------------------------------
 # 根據task_id更新任務狀態並記錄更新時間。
-# 如果任務完成 (success/failed/cancelled)，則立即將其歸檔到 history.json (完整數據)。
+# 如果任務完成 (success/failed/cancelled/aborted)，則立即將其歸檔到 history.json (完整數據)。
 # ----------------------------------------------------------------------------
 def update_task_status(task_id: str, new_status: str, message: str):
     global booking_tasks
@@ -412,7 +412,7 @@ def update_task_status(task_id: str, new_status: str, message: str):
         task['message'] = message
         task['update_time'] = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
 
-        FINAL_STATUSES = ['success', 'failed', 'cancelled']
+        FINAL_STATUSES = ['success', 'failed', 'cancelled', 'aborted']
         if new_status in FINAL_STATUSES:
             # 1. 更新任務完成時間
             task['finish_time'] = task['update_time'] 
@@ -475,6 +475,12 @@ def run_booking_worker():
                     task_to_run = pending_tasks[0]
                     current_running_task_id = task_to_run['task_id']
                     current_cancel_event = threading.Event()
+
+                    print('-' * 80)
+                    print("執行新的訂票任務:")
+                    print(task_to_run['data'])
+                    print('-' * 80)
+
                     # 這裡調用 update_task_status 會再次獲取鎖，但由於操作快，不會造成死鎖
                     update_task_status(task_to_run['task_id'], 'running', '開始執行訂票流程...')
 
@@ -508,6 +514,13 @@ def run_booking_worker():
 
                 # [scott@2026-03-12] final_status 不應該只有 'success' or 'failed', 應該有 '成功', '失敗', '放棄' or '中斷' & '不明原因'
                 final_status = 'success' if success else 'failed'
+
+                print('*' * 80)
+                print(GREEN)
+                print(type(result_msg))
+                print(f"final_status={final_status}, result_msg = {result_msg}")                
+                print(RESET)
+                print('*' * 80)
 
             except Exception as e:
                 final_status = 'failed'
@@ -776,7 +789,8 @@ def cancel_booking(task_id):
         current_status = task['status']
         
         if current_status == 'pending':
-            update_task_status(task_id, 'cancelled', '任務已從隊列中取消。')
+            # update_task_status(task_id, 'cancelled', '任務已從隊列中取消。')
+            update_task_status(task_id, 'aborted', '任務已從隊列中取消。')
             return jsonify({"status": "success", "message": f"任務 {task_id} 已從隊列中移除。"}), 200
         
         elif current_status == 'running':
