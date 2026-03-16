@@ -20,6 +20,12 @@ import re
 
 
 
+# ----------------------------------------------------------------------------
+# --- Global Configuration ---
+# ----------------------------------------------------------------------------
+BASE_DIR = os.path.dirname(__file__)
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 booking_OK = 0
 booking_NG = 0
@@ -121,7 +127,9 @@ def get_captcha_value(image_bytes):
     print(YELLOW + f"Get captcha value '{captcha_value}'" + RESET)
     return captcha_value
 
-def save_captcha_image(session: Session, img_src: str, file_path: str = "captcha_downloaded.png") -> bool:
+def save_captcha_image(session: Session, img_src: str, file_path: str = None) -> bool:
+    if file_path is None:
+        file_path = os.path.join(OUTPUT_DIR, "captcha_downloaded.png")
     """
     結合 BASE_URL 和 img_src (相對路徑)，從網址下載圖片並儲存到本地檔案。
 
@@ -716,16 +724,20 @@ def get_booking_data(passcode: str, task_data: Dict[str, Any]) -> Dict[str, Any]
         raise ValueError("task_data 缺少 'travel_date' 欄位")
 
     # --- 搜尋方式 & 時間/車次 ---
-    train_no = task_data.get('train_no', '').strip()
+    train_no = str(task_data.get('train_no', '') or '').strip()
+    train_time = str(task_data.get('train_time', '') or '').strip()
+
     if train_no:
-        # 車次模式
-        search_by        = 'radio33'
-        outbound_time    = ''
+        # 車次模式（radio33）
+        search_by = 'radio33'
+        outbound_time = ''  # 不需時間參數
         outbound_train_id = train_no
     else:
-        # 時間模式
-        search_by         = 'radio31'
-        outbound_time     = _resolve_timetable_value(task_data.get('train_time', ''))
+        # 時間模式（radio31）
+        if not train_time:
+            raise ValueError("缺少 train_time（HH:MM）或 train_no（車次號碼），兩者不能同時為空。")
+        search_by = 'radio31'
+        outbound_time = _resolve_timetable_value(train_time)
         outbound_train_id = ''
 
     # --- 票種與張數 ---
@@ -825,7 +837,7 @@ def thsr_submit_booking_form(session: Session, page: str, url_path: str, passcod
             logger.info(CYAN + f"Get booking response from {submit_url}" + RESET)
 
             if (SAVE_BOOKING_PAGE):
-                filename = "booking_response.html"
+                filename = os.path.join(OUTPUT_DIR, "booking_response.html")
                 with open(filename, "w", encoding="utf-8") as file:
                     file.write(response.text)
                     # file.write(page)
@@ -1035,159 +1047,6 @@ def select_train_and_submit(page: str, search_by: str, target_list: list) -> str
         return 'No matching train found.'
 
 
-def select_train_and_submit_XXX(page: str, search_by: str, target_list: list) -> str:
-    """
-    根據時間或車次列表自動選擇台灣高鐵訂票頁面上的車次，並嘗試點擊「確認車次」按鈕。
-
-    Args:
-        page: HTML 檔案內容 (字串)。
-        search_by: 查詢方式，'時間' (優先選擇出發時間最接近或等於 target_list 內時間的車次) 
-                   或 '車次' (優先選擇 target_list 內車次號碼的車次)。
-        target_list: 優先的時間列表 (格式: 'HH:MM') 或車次號碼列表 (格式: 'XXX' 或 'XXXX')。
-
-    Returns:
-        如果成功找到並選中車次，返回 'Train selected and form submitted successfully.'。
-        如果未找到符合條件的車次，返回 'No matching train found.'。
-        如果 'search_by' 參數不正確，返回 'Invalid search_by parameter. Must be "時間" or "車次".'。
-    """
-    if search_by not in ['時間', '車次']:
-        return 'Invalid search_by parameter. Must be "時間" or "車次".'
-
-    soup = BeautifulSoup(page, 'html.parser')
-    
-    # 尋找所有車次選項
-    train_options = soup.select('div.result-listing label.result-item')
-
-    # 找到表單的 action URL
-    form = soup.find('form', {'id': 'BookingS2Form'})
-    if not form:
-        return 'Form "BookingS2Form" not found.'
-    
-    form_action = form.get('action')
-    if not form_action:
-        return 'Form action URL not found.'
-
-    # 儲存最終選擇的車次 input 標籤
-    selected_train_input = None
-
-    if search_by == '車次':
-        # 按照 target_list 中的車次號碼優先級選擇
-        for target_code in target_list:
-            for train_label in train_options:
-                train_input = train_label.find('input', {'name': 'TrainQueryDataViewPanel:TrainGroup'})
-                
-                # 取得車次號碼
-                # query_code = train_input.get('QueryCode')
-                query_code = train_input.get('querycode')
-                
-                if query_code == target_code:
-                    selected_train_input = train_input
-                    break
-            if selected_train_input:
-                break
-                
-    elif search_by == '時間':
-        # 尋找最接近 target_list 中優先時間的出發時間
-        
-        # 將 target_list 中的時間轉換為分鐘數，方便比較
-        target_minutes_list = []
-        for time_str in target_list:
-            try:
-                h, m = map(int, time_str.split(':'))
-                target_minutes_list.append(h * 60 + m)
-            except ValueError:
-                print(f"Warning: Invalid time format in target_list: {time_str}")
-                
-        if not target_minutes_list:
-             return 'No valid time format found in target_list.'
-             
-        # 暫時儲存每個車次及其與目標時間的差距
-        train_candidates = []
-        
-        for train_label in train_options:
-            train_input = train_label.find('input', {'name': 'TrainQueryDataViewPanel:TrainGroup'})
-            
-            # 取得出發時間
-            query_departure = train_input.get('querydeparture')
-            if not query_departure:
-                continue
-
-            try:
-                dep_h, dep_m = map(int, query_departure.split(':'))
-                departure_minutes = dep_h * 60 + dep_m
-                
-                # 計算與每個目標時間的差距（越小越好，優先選擇目標時間在前的）
-                min_diff = float('inf')
-                best_target_index = float('inf')
-                
-                for index, target_minutes in enumerate(target_minutes_list):
-                    diff = departure_minutes - target_minutes
-                    
-                    if diff >= 0 and diff < min_diff:
-                        min_diff = diff
-                        best_target_index = index
-                        
-                    elif diff < 0 and departure_minutes > target_minutes:
-                        # 如果是前一天的時間 (例如 00:07 vs 23:59)，這裏暫時忽略跨日情況的複雜性，
-                        # 簡單的假設我們只選當天的，如果需要跨日邏輯會更複雜。
-                        pass
-
-                if min_diff != float('inf'):
-                    # 儲存車次 input、與目標時間的差距、以及在 target_list 中的優先級
-                    train_candidates.append({
-                        'input': train_input, 
-                        'diff': min_diff, 
-                        'target_index': best_target_index,
-                        'departure_minutes': departure_minutes
-                    })
-            except ValueError:
-                # 忽略格式不正確的車次時間
-                continue
-
-        if train_candidates:
-            # 排序邏輯：
-            # 1. 優先級最高的 target_list (target_index 越小越好)
-            # 2. 差距越小越好 (diff 越小越好)
-            # 3. 如果差距和目標優先級都一樣，則選出發時間較早的 (departure_minutes 越小越好)
-            train_candidates.sort(key=lambda x: (x['target_index'], x['diff'], x['departure_minutes']))
-            
-            selected_train_input = train_candidates[0]['input']
-            
-    
-    if selected_train_input:
-        # 1. 設定選中的車次 input 的 'checked' 屬性為 'true'，並移除其他選項的 'checked'
-        for train_label in train_options:
-            train_input = train_label.find('input', {'name': 'TrainQueryDataViewPanel:TrainGroup'})
-            if train_input == selected_train_input:
-                train_input['checked'] = 'true'
-            else:
-                if 'checked' in train_input.attrs:
-                    del train_input['checked']
-                    
-        # 2. 模擬點擊 '確認車次' 按鈕 (這個函式只是準備資料和提示下一步，實際的網路請求需要您在外部處理)
-        
-        # 取得選中車次的關鍵資訊來模擬表單提交
-        selected_code = selected_train_input.get('querycode')
-        selected_departure = selected_train_input.get('querydeparture')
-        
-        # 建立提交表單所需的資料 (簡化，實際可能需要更多 hidden 欄位)
-        form_data = {
-            'BookingS2Form:hf:0': '',
-            'SubmitButton': '確認車次'
-            # 實際提交時還需要選中的 radio button 的 value，這裡假設為 train_input.get('value')
-            # 這裡我們只模擬選擇，實際提交的 HTTP Request/Data 需要外部 library (如 requests) 處理
-        }
-        
-        print(f"Selected Train: Code={selected_code}, Departure={selected_departure}")
-        print(f"Next step: Submit form to {form_action} with data including the selected train.")
-        
-        # 返回成功訊息
-        return 'Train selected and form submitted successfully.'
-    else:
-        # 未找到符合條件的車次
-        return 'No matching train found.'
-
-
 # ----------------------------------------------------------------------------
 # Load Booking Main Page
 # ----------------------------------------------------------------------------
@@ -1212,7 +1071,7 @@ def thsr_load_booking_page(session: Session) -> str:
             page = response.text   # or response.text ??
             logger.info(CYAN + f"Get booking page from {BOOKING_PAGE_URL}" + RESET)
             if (SAVE_BOOKING_PAGE):
-                filename = "booking_1st_page.html"
+                filename = os.path.join(OUTPUT_DIR, "booking_1st_page.html")
                 with open(filename, "w", encoding="utf-8") as file:
                     # file.write(response.text)
                     file.write(page)
@@ -1355,7 +1214,7 @@ def thsr_run_booking_flow(
         status_updater(task_id, 'running', '表單提交成功。選擇車次中...')
 
         if SAVE_BOOKING_PAGE:
-            filename = "booking_2nd_page.html"
+            filename = os.path.join(OUTPUT_DIR, "booking_2nd_page.html")
             with open(filename, "w", encoding="utf-8") as file:
                 file.write(page)
             logger.info(f"HTML content saved to {filename}")
@@ -1366,10 +1225,17 @@ def thsr_run_booking_flow(
         if cancel_event.is_set():
             raise Exception("取消運行中任務")
 
-        train_time = task_data.get('train_time', '')
-        target_times = [train_time] if train_time else []
+        train_no = str(task_data.get('train_no', '') or '').strip()
+        train_time = str(task_data.get('train_time', '') or '').strip()
 
-        submission_info = select_train_and_submit(page, '時間', target_times)
+        if train_no:
+            # 依車次號碼選擇
+            submission_info = select_train_and_submit(page, '車次', [train_no])
+        else:
+            # 依時間 (HH:MM) 選擇
+            if not train_time:
+                raise ValueError("缺少 train_time（HH:MM）或 train_no（車次號碼），無法選擇車次。")
+            submission_info = select_train_and_submit(page, '時間', [train_time])
 
         if not isinstance(submission_info, dict):
             result_message = f"選車失敗：{submission_info}"
@@ -1396,7 +1262,7 @@ def thsr_run_booking_flow(
         response.raise_for_status()
 
         if SAVE_BOOKING_PAGE:
-            filename = "booking_3rd_page.html"
+            filename = os.path.join(OUTPUT_DIR, "booking_3rd_page.html")
             with open(filename, "w", encoding="utf-8") as file:
                 file.write(response.text)
             logger.info(f"HTML content saved to {filename}")

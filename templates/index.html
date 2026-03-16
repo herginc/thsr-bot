@@ -548,8 +548,20 @@
 
         if(!form.travel_date.value) { alert('請選擇乘車日期'); return; }
         
-        if(bookingMethod === 'radio31' && !form.train_time.value) {
-            alert('請選擇乘車時間');
+        if(bookingMethod === 'radio31') {
+            if (!form.train_time.value) {
+                alert('請選擇乘車時間');
+                return;
+            }
+            // 檢查 HH:MM 格式
+            if (!/^\d{1,2}:\d{2}$/.test(form.train_time.value)) {
+                alert('乘車時間格式錯誤，請使用 HH:MM（例如 09:00）。');
+                return;
+            }
+        }
+
+        if(bookingMethod === 'radio33' && !form.train_no.value) {
+            alert('車次模式請輸入車次號碼');
             return;
         }
 

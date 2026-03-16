@@ -56,10 +56,16 @@ logger = logging.getLogger(__name__)
 FORMAT = '[%(asctime)s][%(levelname)s][%(funcName)s]: %(message)s'
 logging.basicConfig(level=logging.INFO, format=FORMAT)
 
-# --- 檔案名稱配置 ---
-PASSENGER_FILE  = 'passenger.json'
-TASKS_FILE      = 'tasks.json'
-HISTORY_FILE    = 'history.json'
+# ----------------------------------------------------------------------------
+# --- Global Configuration ---
+# ----------------------------------------------------------------------------
+BASE_DIR = os.path.dirname(__file__)
+JSON_DIR = os.path.join(BASE_DIR, "json")
+os.makedirs(JSON_DIR, exist_ok=True)
+
+PASSENGER_FILE = os.path.join(JSON_DIR, "passenger.json")
+TASKS_FILE     = os.path.join(JSON_DIR, "tasks.json")
+HISTORY_FILE   = os.path.join(JSON_DIR, "history.json")
 
 # 使用 timedelta 支援 Python 3.8
 CST_TIMEZONE = timezone(timedelta(hours=8))
@@ -97,7 +103,7 @@ def save_json(filename, data):
 
 
 # ----------------------------------------------------------------------------
-# --- 核心配置與全局狀態 ---
+# --- 全局狀態 ---
 # ----------------------------------------------------------------------------
 
 data_lock = threading.RLock()
@@ -130,11 +136,11 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 # 必須在 app 實例化之後調用，並定義為一般函式
 def start_booking_worker_thread():
     global booking_thread
-    with data_lock:
-        if booking_thread is None or not booking_thread.is_alive():
-            print(f"[{datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')}] 啟動背景訂票 worker 執行緒...")
-            booking_thread = threading.Thread(target=run_booking_worker, daemon=True)
-            booking_thread.start()
+    # 這裡不需要加鎖，因為只在啟動時執行一次
+    if booking_thread is None or not booking_thread.is_alive():
+        print(f"[{datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')}] 啟動背景訂票 worker 執行緒...")
+        booking_thread = threading.Thread(target=run_booking_worker, daemon=True)
+        booking_thread.start()
 
 # ----------------------------------------------------------------------------
 # ID 生成器：取得當前毫秒級時間戳後面8碼
@@ -627,6 +633,7 @@ def submit_booking():
             '愛心':   'disabled',
             '敬老':   'elder',
             '大學生': 'college',
+            '學生':   'college',  # 兼容 passenger.json 中寫法
         }
         raw_identity = data.get('identity', '')
         data['identity'] = IDENTITY_ZH_TO_EN.get(raw_identity, 'adult')
@@ -652,6 +659,30 @@ def submit_booking():
         data['seat_prefer'] = SEAT_OPTION_ZH_TO_INT.get(raw_seat_option, 0)
 
         # --- END: 欄位正規化 ---
+
+        # --- START: 必填欄位驗證（避免進入 worker 才失敗） ---
+        booking_method = str(data.get('bookingMethod', '') or '').strip()
+        train_no = str(data.get('train_no', '') or '').strip()
+        train_time = str(data.get('train_time', '') or '').strip()
+
+        if booking_method == 'radio33':
+            if not train_no:
+                return jsonify({
+                    "status": "error",
+                    "message": "車次模式 (radio33) 需提供 train_no。"
+                }), 400
+        else:
+            if not train_time:
+                return jsonify({
+                    "status": "error",
+                    "message": "時間模式需提供 train_time (格式 HH:MM)。"
+                }), 400
+            if not re.match(r'^\d{1,2}:\d{2}$', train_time):
+                return jsonify({
+                    "status": "error",
+                    "message": "train_time 格式錯誤，請使用 HH:MM（例如 09:00）。"
+                }), 400
+        # --- END: 必填欄位驗證 ---
 
         task_id = get_new_task_id()
 
@@ -892,6 +923,3 @@ if __name__ == "__main__":
 #    這仍然能滿足 '單一任務處理' 的需求，但為了確保 worker 啟動，
 #    最簡單且相容的作法是在 app.py 頂層調用 start_booking_worker_thread()。
 #    但為了保持結構清潔，我們將其放在 __main__ 中，並依賴 gunicorn 啟動後的進程獨立性。
-
-# 為了確保 Gunicorn worker 也啟動，請將 start_booking_worker_thread()
-# 放在 app = Flask(__name__) 之後的頂層代碼區塊。
