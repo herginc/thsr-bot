@@ -455,9 +455,15 @@
                 if      (status === 'running')    statusLabel = '訂票中';
                 else if (status === 'pending')    statusLabel = '等待中';
                 else if (status === 'cancelling') statusLabel = '取消中';
-                else if (status === 'success')    statusLabel = '成功';
-                else if (status === 'failed')     statusLabel = '失敗';
-                else if (status === 'cancelled')  statusLabel = '取消';
+                else if (status === 'success')    statusLabel = '成功OK';
+                else if (status === 'failed')     statusLabel = '失敗NG';
+                else if (status === 'cancelled')  statusLabel = '取消XX';
+                else if (status === 'booking_success')    statusLabel = '成功';
+                else if (status === 'booking_failed')     statusLabel = '失敗';
+                else if (status === 'task_aborted')       statusLabel = '中止';
+                else if (status === 'task_cancelled')     statusLabel = '取消';
+                else if (status === 'task_deleted')       statusLabel = '任務刪除';
+                else if (status === 'unknown_result')     statusLabel = '不明原因中止'
 
                 // --- 解析 train_info 欄位 ---
                 // 格式: 從 [起站] 到 [訖站] (YYYY-MM-DD HH:MM)
@@ -488,7 +494,7 @@
                 // --- 操作按鈕 ---
                 let actionBtn = '—';
                 if (status === 'pending') {
-                    actionBtn = `<button class="secondary-btn" style="height:30px; padding:2px 10px; font-size:0.8rem;" onclick="cancelTask('${task.id}')">刪除</button>`;
+                    actionBtn = `<button class="secondary-btn" style="height:30px; padding:2px 10px; font-size:0.8rem;" onclick="cancelTask('${task.id}')">取消</button>`;
                 } else if (status === 'running' || status === 'cancelling') {
                     actionBtn = `<button class="secondary-btn" style="height:30px; padding:2px 10px; font-size:0.8rem;" onclick="cancelTask('${task.id}')">放棄</button>`;
                 }

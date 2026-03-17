@@ -1159,7 +1159,7 @@ def thsr_run_booking_flow(
         # 步驟 2: 載入訂票首頁
         # ------------------------------------------------------------------
         if cancel_event.is_set():
-            raise Exception("取消排隊中任務")
+            raise Exception("放棄排隊中任務")
 
         page = thsr_load_booking_page(session)
         if not page:
@@ -1170,7 +1170,7 @@ def thsr_run_booking_flow(
         # 步驟 3: 解析表單元素 ID
         # ------------------------------------------------------------------
         if cancel_event.is_set():
-            raise Exception("取消運行中任務")
+            raise Exception("放棄運行中任務")
 
         booking_form = parse_booking_form_element_id(session, page)
         if booking_form is None:
@@ -1184,8 +1184,10 @@ def thsr_run_booking_flow(
         # ------------------------------------------------------------------
         # 步驟 4: 下載驗證碼並識別
         # ------------------------------------------------------------------
+        sleep_range(5, 6)
+
         if cancel_event.is_set():
-            raise Exception("取消運行中任務")
+            raise Exception("放棄運行中任務")
 
         passcode = None
         if captcha_passcode_url:
@@ -1209,13 +1211,15 @@ def thsr_run_booking_flow(
         page = thsr_submit_booking_form(session, page, booking_form_submit_url, passcode, task_data)
 
         is_error_found, errmsg_set = check_and_print_errors(page)
+
         if is_error_found:
             # 驗證碼錯誤或表單錯誤，本輪失敗 (呼叫端的 while loop 可決定是否重試)
             # result_message = "訂票表單提交失敗：驗證碼錯誤或欄位有誤。"     # [scott@2026-03-15] 直接使用Server回覆的訊息 (無 '欄位有誤')
-            errmsg_str = str(errmsg_set)
-            result_message = errmsg_str    # [scott@2026-03-16] should translate errmsg_list to errmsg_str
+            # errmsg_str = str(errmsg_set)
+            # result_message = errmsg_str    # [scott@2026-03-16] should translate errmsg_list to errmsg_str
+            result_message = "".join(errmsg_set)  # 把集合裡的字串合併
             booking_NG += 1
-            return False, result_message
+            return "booking_failed", result_message
 
         status_updater(task_id, 'running', '表單提交成功。選擇車次中...')
 
@@ -1285,24 +1289,36 @@ def thsr_run_booking_flow(
             booking_OK += 1
             status_updater(task_id, 'running', f'訂位成功！{result_message}')
         else:
-            result_message = "訂位請求已送出，但未能解析訂位代號，請至官網確認。"
-            booking_success = True   # 請求成功送達，視為成功
-            booking_OK += 1
+            result_message = "訂位請求已送出，但搶輸訂位" # [scott@2026-03-17] 應該是搶輸訂位, should save webpage for debugging
+            # result_message = "訂位請求已送出，但未能解析訂位代號，請至官網確認。" # [scott@2026-03-17] 應該是搶輸訂位
+            booking_NG += 1
             status_updater(task_id, 'running', result_message)
+            return "booking_failed", result_message
 
-        return booking_success, result_message
+        return "booking_success", result_message
 
     except Exception as e:
-        err_str = str(e)
-
-        if "取消" in err_str:
-            result_message = err_str
-            return False, result_message
+        if "取消" in str(e) or "中斷" in str(e) or "放棄" in str(e):
+            result_message = str(e)
+            return 'task_aborted', result_message
 
         booking_NG += 1
         result_message = f"訂票流程中斷: {e}"
         logger.error(f"Task {task_id} execution failed: {e}")
-        return False, result_message
+        return 'unknown_result', result_message
+
+
+    # except Exception as e:
+    #     err_str = str(e)
+
+    #     if "取消" in err_str:
+    #         result_message = err_str
+    #         return False, result_message
+
+    #     booking_NG += 1
+    #     result_message = f"訂票流程中斷: {e}"
+    #     logger.error(f"Task {task_id} execution failed: {e}")
+    #     return False, result_message
 
     finally:
         t1 = time.perf_counter() - t0

@@ -29,8 +29,8 @@ import logging
 # True  → 使用 booking.thsr_run_booking_flow_with_data (模擬版本，用於開發/測試)
 # False → 使用 proxy.thsr_run_booking_flow             (真實版本，連接高鐵官網)
 # ----------------------------------------------------------------------------
-USE_MOCK_BOOKING = True
-# USE_MOCK_BOOKING = False
+# USE_MOCK_BOOKING = True
+USE_MOCK_BOOKING = False
 
 
 # ----------------------------------------------------------------------------
@@ -315,7 +315,7 @@ def load_history():
                     data = h.get('data', {})
                     
                     # 1. 訂票結果
-                    h['result_text'] = {'success': '成功', 'failed': '失敗', 'cancelled': '取消', 'aborted': '放棄'}.get(h.get('result', ''), '未知')
+                    h['result_text'] = {'success': '成功', 'failed': '失敗', 'task_cancelled': '取消', 'task_aborted': '放棄'}.get(h.get('result', ''), '未知')
                     
                     # 2. 訂票時間 (finish_time)
                     h['formatted_order_date'] = finish_datetime.strftime('%Y/%m/%d %H:%M:%S')
@@ -476,10 +476,12 @@ def run_booking_worker():
                     current_running_task_id = task_to_run['task_id']
                     current_cancel_event = threading.Event()
 
+                    print(YELLOW)
                     print('-' * 80)
                     print("執行新的訂票任務:")
                     print(task_to_run['data'])
                     print('-' * 80)
+                    print(RESET)
 
                     # 這裡調用 update_task_status 會再次獲取鎖，但由於操作快，不會造成死鎖
                     update_task_status(task_to_run['task_id'], 'running', '開始執行訂票流程...')
@@ -512,18 +514,19 @@ def run_booking_worker():
                     update_task_status
                 )
 
-                # [scott@2026-03-12] final_status 不應該只有 'success' or 'failed', 應該有 '成功', '失敗', '放棄' or '中斷' & '不明原因'
-                final_status = 'success' if success else 'failed'
+                # [scott@2026-03-12] final_status 不應該只有 'success' or 'failed', 應該有 '成功', '失敗', '放棄', '取消' or '中斷' & '不明原因'
+                # [scott@2026-03-17] final_status: 'booking_success', 'booking_failed', 'task_cancelled', 'task_aborted' or 'unknown_result'
+                # final_status = 'success' if success else 'failed'
+                final_status = success
 
-                print('*' * 80)
                 print(GREEN)
-                print(type(result_msg))
-                print(f"final_status={final_status}, result_msg = {result_msg}")                
-                print(RESET)
                 print('*' * 80)
+                print(f"final_status = {final_status}, result_msg = {result_msg}")                
+                print('*' * 80)
+                print(RESET)
 
             except Exception as e:
-                final_status = 'failed'
+                final_status = 'booking_failed'
                 result_msg = f"執行錯誤: {e}"
             
             # 任務完成後更新狀態並清除運行中的標記 (重新鎖定)
@@ -532,7 +535,7 @@ def run_booking_worker():
                 if current_task and (current_task['status'] == 'running' or current_task['status'] == 'cancelling'):
                     
                     if current_task['status'] == 'cancelling':
-                        final_status = 'cancelled'
+                        final_status = 'task_cancelled'
                         if '被使用者取消' not in result_msg:
                             # result_msg = '任務被使用者強制取消。'
                             result_msg = '使用者中斷任務'
@@ -789,8 +792,7 @@ def cancel_booking(task_id):
         current_status = task['status']
         
         if current_status == 'pending':
-            # update_task_status(task_id, 'cancelled', '任務已從隊列中取消。')
-            update_task_status(task_id, 'aborted', '任務已從隊列中取消。')
+            update_task_status(task_id, 'task_cancelled', '任務已從隊列中取消。')
             return jsonify({"status": "success", "message": f"任務 {task_id} 已從隊列中移除。"}), 200
         
         elif current_status == 'running':

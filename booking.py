@@ -66,10 +66,14 @@ logging.basicConfig(level=logging.INFO, format=FORMAT)
 
 
 # ----------------------------------------------------------------------------
-# As is:
-#     return 只有 True or False
-# To be:
-#     return 可以有 '成功', '失敗', '放棄' or '中斷'
+#  return status (str), message (str)
+#
+#  final_status:
+#     'booking_success' (成功)
+#     'booking_failed'  (失敗)
+#     'task_cancelled'  (取消) 
+#     'task_aborted'    (放棄) 
+#     'unknown_result'  (不明原因)
 # ----------------------------------------------------------------------------
 
 def thsr_run_booking_flow_with_data(
@@ -103,27 +107,24 @@ def thsr_run_booking_flow_with_data(
     # --- 實際的 thsr 訂票流程 ---
     try:
         if cancel_event.is_set():
-            # raise Exception("任務開始前已被取消。")
-            raise Exception("取消排隊中任務")
+            raise Exception("使用者放棄即將開始的訂票任務")
 
         # 1. 初始化 Session
         session = session_init()
         if not session:
-            raise Exception("Session 初始化失敗。")
+            raise Exception("Session 初始化失敗")
         status_updater(task_id, 'running', 'Session 初始化成功。準備開始訂票步驟...')
         
         # 2. 模擬多個步驟，並檢查取消信號
         for step in range(1, total_steps + 1):
             
             if cancel_event.is_set():
-                # raise Exception("任務運行中被使用者取消。")
-                raise Exception("取消運行中任務")
+                raise Exception("使用者放棄運行中訂票任務")
 
-            # 在這裡模擬長時間延遲
+            # 模擬網路延遲: 在這裡模擬長時間延遲
             step_delay = random.uniform(MIN_STEP_DELAY, MAX_STEP_DELAY)
-            sleep_range(step_delay, step_delay) # 確保延遲落在設定區間
-
-            # sleep_range(0.3, 0.8) # 模擬網路延遲
+            sleep(step_delay) # 確保延遲落在設定區間
+            # sleep_range(MIN_STEP_DELAY, MAX_STEP_DELAY) # 確保延遲落在設定區間
 
             # --- 模擬步驟進度與結果 ---
             if step == 1: 
@@ -153,28 +154,21 @@ def thsr_run_booking_flow_with_data(
         # 3. 處理結果
         if booking_success:
             booking_OK += 1
-            final_msg = result_message
-            return True, final_msg
-            # return '成功', final_msg
+            return 'booking_success', result_message
         else:
             booking_NG += 1
-            return False, result_message
-            # return '??', result_message  # not final msg, so 不是 '失敗'
-            # return '失敗', result_message  # 已經是final結束, 上面for loop 已結束
+            return 'booking_failed', result_message
 
 
     except Exception as e:
-        # if "被使用者取消" in str(e):
-        if "取消" in str(e):
+        if "取消" in str(e) or "中斷" in str(e) or "放棄" in str(e):
             result_message = str(e)
-            return False, result_message
-            # return '放棄', result_message
-            
+            return 'task_aborted', result_message
+
         booking_NG += 1
         result_message = f"訂票流程中斷: {e}"
         logger.error(f"Task {task_id} execution failed: {e}")
-        return False, result_message
-        # return '不明原因', result_message
+        return 'unknown_result', result_message
     
     finally:
         t1 = time.perf_counter() - t0
