@@ -1145,7 +1145,7 @@ def thsr_run_booking_flow(
         # 步驟 0: 取消檢查
         # ------------------------------------------------------------------
         if cancel_event.is_set():
-            raise Exception("取消排隊中任務")
+            raise Exception("取消排隊中任務1")
 
         # ------------------------------------------------------------------
         # 步驟 1: 初始化 Session
@@ -1159,7 +1159,7 @@ def thsr_run_booking_flow(
         # 步驟 2: 載入訂票首頁
         # ------------------------------------------------------------------
         if cancel_event.is_set():
-            raise Exception("放棄排隊中任務")
+            raise Exception("放棄排隊中任務2")
 
         page = thsr_load_booking_page(session)
         if not page:
@@ -1170,7 +1170,7 @@ def thsr_run_booking_flow(
         # 步驟 3: 解析表單元素 ID
         # ------------------------------------------------------------------
         if cancel_event.is_set():
-            raise Exception("放棄運行中任務")
+            raise Exception("放棄運行中任務3")
 
         booking_form = parse_booking_form_element_id(session, page)
         if booking_form is None:
@@ -1187,7 +1187,7 @@ def thsr_run_booking_flow(
         sleep_range(5, 6)
 
         if cancel_event.is_set():
-            raise Exception("放棄運行中任務")
+            raise Exception("放棄運行中任務4")
 
         passcode = None
         if captcha_passcode_url:
@@ -1205,7 +1205,7 @@ def thsr_run_booking_flow(
         # 步驟 5: 提交訂票表單 (第一頁)
         # ------------------------------------------------------------------
         if cancel_event.is_set():
-            raise Exception("取消運行中任務")
+            raise Exception("取消運行中任務5")
 
         sleep_range(2, 3)
         page = thsr_submit_booking_form(session, page, booking_form_submit_url, passcode, task_data)
@@ -1233,7 +1233,7 @@ def thsr_run_booking_flow(
         # 步驟 6: 選擇車次並取得提交資料
         # ------------------------------------------------------------------
         if cancel_event.is_set():
-            raise Exception("取消運行中任務")
+            raise Exception("取消運行中任務6")
 
         train_no = str(task_data.get('train_no', '') or '').strip()
         train_time = str(task_data.get('train_time', '') or '').strip()
@@ -1260,7 +1260,7 @@ def thsr_run_booking_flow(
         # 步驟 7: POST 送出訂位
         # ------------------------------------------------------------------
         if cancel_event.is_set():
-            raise Exception("取消運行中任務")
+            raise Exception("取消運行中任務7")
 
         response = session.post(
             BASE_URL + submission_url,
@@ -1298,27 +1298,18 @@ def thsr_run_booking_flow(
         return "booking_success", result_message
 
     except Exception as e:
+        print(f"{RED}Exception occurred - {task_id}: {e}{RESET}")
+    
         if "取消" in str(e) or "中斷" in str(e) or "放棄" in str(e):
             result_message = str(e)
+            status_updater(task_id, 'task_aborted', result_message)
             return 'task_aborted', result_message
 
         booking_NG += 1
         result_message = f"訂票流程中斷: {e}"
         logger.error(f"Task {task_id} execution failed: {e}")
+        status_updater(task_id, 'unknown_result', result_message)
         return 'unknown_result', result_message
-
-
-    # except Exception as e:
-    #     err_str = str(e)
-
-    #     if "取消" in err_str:
-    #         result_message = err_str
-    #         return False, result_message
-
-    #     booking_NG += 1
-    #     result_message = f"訂票流程中斷: {e}"
-    #     logger.error(f"Task {task_id} execution failed: {e}")
-    #     return False, result_message
 
     finally:
         t1 = time.perf_counter() - t0

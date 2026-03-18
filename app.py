@@ -536,9 +536,8 @@ def run_booking_worker():
                     
                     if current_task['status'] == 'cancelling':
                         final_status = 'task_cancelled'
-                        if '被使用者取消' not in result_msg:
-                            # result_msg = '任務被使用者強制取消。'
-                            result_msg = '使用者中斷任務'
+                        # if '被使用者取消' not in result_msg:
+                        #     result_msg = '使用者中斷任務'
                     
                     # 如果成功，將結果寫入 history.json (略過)
                     # 確保將訂位代號存入 task 物件
@@ -735,6 +734,7 @@ def submit_booking():
 # ----------------------------------------------------------------------------
 @app.route("/api/status", methods=["GET"])
 @app.route("/api/get_tasks", methods=["GET"])
+@app.route("/api/get_tasks_status", methods=["GET"])
 def get_booking_status():
     # with lock裡的動作, 盡量不要太久
     with data_lock:
@@ -800,6 +800,7 @@ def cancel_booking(task_id):
             if current_running_task_id == task_id and current_cancel_event:
                 current_cancel_event.set() # 發送取消信號
                 # 將狀態設為 'cancelling'，等待 worker 執行緒響應並將最終狀態設為 'cancelled'
+                print(YELLOW + f"已發送取消信號(cancelling)給運行中的任務 {task_id}，正在等待其停止..." + RESET)
                 update_task_status(task_id, 'cancelling', '已發送取消信號，正在等待 booking 停止運行...')
                 return jsonify({"status": "success", "message": f"已發送取消信號給運行中的任務 {task_id}。"}), 200
             else:
