@@ -1,5 +1,5 @@
 # =======================================================
-# app.py (Flask Web Server) - 已更新，支援任務隊列、背景執行緒與取消
+# app.py (Flask Web Server) - 支援任務隊列、背景執行緒與取消
 # =======================================================
 
 # Must for Render environment
@@ -7,9 +7,11 @@ import gevent.monkey
 gevent.monkey.patch_all()
 
 import os
-import sys
+# import sys
+import re
 import json
 import time
+import logging
 import threading
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
@@ -20,9 +22,8 @@ from flask import Flask, request, abort, render_template, jsonify, redirect
 
 import booking
 import proxy
-import re
 from config import *
-import logging
+from tdx_api import get_thsr_timetable_od_by_name
 
 # ----------------------------------------------------------------------------
 # 訂票模式切換
@@ -70,6 +71,7 @@ HISTORY_FILE   = os.path.join(JSON_DIR, "history.json")
 # 使用 timedelta 支援 Python 3.8
 CST_TIMEZONE = timezone(timedelta(hours=8))
 
+# logger.info(f'TDX config: APP_ID={TDX_APP_ID!r}, APP_KEY={TDX_APP_KEY!r}')
 
 # --- Helper Functions ---
 
@@ -887,8 +889,6 @@ def passenger_page():
 # 注意：若您的 passenger.html 中沒有處理 error 參數，需要微幅修改 passenger.html
 # ----------------------------------------------------------------------
 
-
-
 @app.route("/history.html")
 def history_page():
     # 這裡的邏輯需要與實際的 history.json 格式相符
@@ -898,6 +898,59 @@ def history_page():
     # 假設 history.json 中的每個項目已經包含所需的鍵
     # 為了簡化，這裡僅傳遞 history 列表
     return render_template("history.html", history=history if history else [])
+    
+# ----------------------------------------------------------------------------
+# 根據日期及起訖站，查詢高鐵班次下拉選單資料。
+# TDX_APP_ID, TDX_APP_KEY 由 config.py 提供 (from config import *)
+# ----------------------------------------------------------------------------
+@app.route('/api/get_trains', methods=['GET'])
+def api_get_trains():
+    """
+    查詢高鐵班次下拉選單資料。
+
+    Query Parameters:
+        origin      (str): 出發站名稱，例如 '台北'
+        destination (str): 到達站名稱，例如 '台中'
+        date        (str): 乘車日期 YYYY-MM-DD
+
+    Returns (JSON):
+        {
+            "status": "success",
+            "trains": [
+                {
+                    "train_no":     "0205",
+                    "dep_time":     "07:51",
+                    "arr_time":     "08:38",
+                    "duration_min": 47,
+                    "label":        "0205, 07:51 - 08:38 (47 min)",
+                    "train_type":   "直達車"
+                },
+                ...
+            ]
+        }
+    """
+    origin      = request.args.get('origin', '').strip()
+    destination = request.args.get('destination', '').strip()
+    date        = request.args.get('date', '').strip()
+
+    if not origin or not destination or not date:
+        return jsonify({'status': 'error', 'message': '缺少必要參數 origin / destination / date'}), 400
+
+    try:
+        trains = get_thsr_timetable_od_by_name(
+            app_id=TDX_APP_ID,
+            app_key=TDX_APP_KEY,
+            origin_name=origin,
+            destination_name=destination,
+            train_date=date,
+        )
+        return jsonify({'status': 'success', 'trains': trains})
+
+    except ValueError as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f'api_get_trains error: {e}')
+        return jsonify({'status': 'error', 'message': f'查詢失敗: {str(e)}'}), 500
 
 
 # 將啟動函式保留為一般函式

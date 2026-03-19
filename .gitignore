@@ -3,6 +3,7 @@ __pycache__/
 json/
 output/
 backup/
+sample_code/
 *.png
 *.html
 *.json

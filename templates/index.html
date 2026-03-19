@@ -66,6 +66,20 @@
         .dropdown-list.open { display: block; }
         .dropdown-list li a { display: block; padding: 0.65rem 1.2rem; color: #1565c0; text-decoration: none; font-size: 0.95rem; font-weight: normal; margin: 0; white-space: nowrap; }
         .dropdown-list li a:hover { background: #e3f2fd; }
+        .cdd-wrap { position: relative; flex: 1; min-width: 0; }
+        .cdd-trigger { width: 100%; padding: 0.6rem 28px 0.6rem 0.6rem; border: 1px solid #ccc; border-radius: 5px; font-size: 0.88rem; font-family: 'Courier New', Courier, monospace; background: #fff; cursor: pointer; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #333; display: block; line-height: 1.4; box-sizing: border-box; }
+        .cdd-trigger:focus { outline: none; box-shadow: 0 0 0 2px #90caf9; }
+        .cdd-trigger:disabled { background: #e9ecef; cursor: not-allowed; color: #adb5bd; }
+        .cdd-arrow { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none; font-size: 11px; color: #888; }
+        .cdd-list { display: none; position: absolute; left: 0; right: 0; top: calc(100% + 3px); background: #fff; border: 1px solid #ccc; border-radius: 5px; z-index: 9999; max-height: 300px; overflow-y: auto; box-shadow: 0 4px 14px rgba(0,0,0,0.12); }
+        .cdd-list.open { display: block; }
+        .cdd-item { padding: 7px 10px; cursor: pointer; font-family: 'Courier New', Courier, monospace; font-size: 0.88rem; border-bottom: 0.5px solid #f0f0f0; white-space: pre; }
+        .cdd-item:last-child { border-bottom: none; }
+        .cdd-item:hover, .cdd-item.cdd-selected { background: #e3f2fd; }
+        .t-no   { color: #1565c0; font-weight: bold; }
+        .t-sep  { color: #999; }
+        .t-time { color: #2e7d32; }
+        .t-dur  { color: #6a1e8a; }
         @media (max-width: 768px) {
             header { font-size: 1.5rem; padding: 1rem 0; }
             .container { padding: 1.5rem 1rem; }
@@ -221,9 +235,18 @@
                     </select>
                 </label>
 
-                <label class="label-horizontal">
+                <label class="label-horizontal" id="train-no-label">
                     <span>車次</span>
-                    <input type="text" name="train_no" placeholder="例如 0123">
+                    <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-width:220px;">
+                        <div class="cdd-wrap" id="cddWrap">
+                            <button type="button" class="cdd-trigger" id="cdd-trigger" disabled>
+                                <span id="cdd-display" style="color:#adb5bd;">— 請先選擇出發站、到達站及日期 —</span>
+                            </button>
+                            <span class="cdd-arrow">▼</span>
+                            <div class="cdd-list" id="cdd-list"></div>
+                        </div>
+                        <input type="hidden" name="train_no" id="train-no-value" value="">
+                    </div>
                 </label>
 
                 <label class="label-horizontal">
@@ -311,30 +334,129 @@
         const temp = startSelect.value;
         startSelect.value = destSelect.value;
         destSelect.value = temp;
+        const method = document.querySelector('input[name="bookingMethod"]:checked');
+        if (method && method.value === 'radio33') loadTrainOptions();
     }
 
     // 搜尋方式與輸入框連動
     function initBookingMethodLogic() {
         const radios = document.querySelectorAll('input[name="bookingMethod"]');
         const trainTimeSelect = document.querySelector('select[name="train_time"]');
-        const trainNoInput = document.querySelector('input[name="train_no"]');
+        const cddTrigger = document.getElementById('cdd-trigger');
 
         function updateInputs() {
             const checkedRadio = document.querySelector('input[name="bookingMethod"]:checked');
             if (!checkedRadio) return;
             const selected = checkedRadio.value;
-            if (selected === 'radio31') { 
+            if (selected === 'radio31') {
                 trainTimeSelect.disabled = false;
-                trainNoInput.disabled = true;
-                trainNoInput.value = ""; 
-            } else { 
+                cddTrigger.disabled = true;
+                document.getElementById('train-no-value').value = '';
+                document.getElementById('cdd-display').innerHTML = '<span style="color:#adb5bd;">— 請先查詢車次 —</span>';
+                document.querySelectorAll('.cdd-item').forEach(i => i.classList.remove('cdd-selected'));
+            } else {
                 trainTimeSelect.disabled = true;
-                trainNoInput.disabled = false;
-                trainTimeSelect.value = ""; 
+                cddTrigger.disabled = false;
+                trainTimeSelect.value = '';
             }
         }
         radios.forEach(r => r.addEventListener('change', updateInputs));
         updateInputs();
+    }
+
+    // 自動觸發查詢：乘車日期、出發站、到達站任一變動時
+    function initAutoTrainLoad() {
+        const dateInput = document.getElementById('travel-date-input');
+        const startSel  = document.querySelector('select[name="start_station"]');
+        const endSel    = document.querySelector('select[name="end_station"]');
+
+        function onTrigger() {
+            const method = document.querySelector('input[name="bookingMethod"]:checked');
+            if (method && method.value === 'radio33') loadTrainOptions();
+        }
+        dateInput.addEventListener('change', onTrigger);
+        startSel.addEventListener('change', onTrigger);
+        endSel.addEventListener('change', onTrigger);
+    }
+
+    // -----------------------------------------------------------------------
+    // 自訂車次下拉元件
+    // -----------------------------------------------------------------------
+    function makeTrainHTML(t) {
+        return `<span class="t-no">${t.train_no}</span><span class="t-sep">, </span><span class="t-time">${t.dep_time}-${t.arr_time}</span><span class="t-sep"> </span><span class="t-dur">(${t.duration_min}分)</span>`;
+    }
+
+    function cddToggle() {
+        document.getElementById('cdd-list').classList.toggle('open');
+    }
+
+    function cddSelectTrain(t, el) {
+        document.querySelectorAll('.cdd-item').forEach(i => i.classList.remove('cdd-selected'));
+        el.classList.add('cdd-selected');
+        document.getElementById('cdd-display').innerHTML = makeTrainHTML(t);
+        document.getElementById('train-no-value').value = t.train_no;
+        document.getElementById('cdd-list').classList.remove('open');
+    }
+
+    document.addEventListener('click', function(e) {
+        const wrap = document.getElementById('cddWrap');
+        if (wrap && !wrap.contains(e.target)) {
+            document.getElementById('cdd-list').classList.remove('open');
+        }
+    });
+
+    document.getElementById('cdd-trigger').addEventListener('click', function() {
+        if (!this.disabled) cddToggle();
+    });
+
+    // -----------------------------------------------------------------------
+    // 車次查詢：呼叫後端 /api/get_trains，全部班次直接顯示
+    // -----------------------------------------------------------------------
+    async function loadTrainOptions() {
+        const startStation = document.querySelector('select[name="start_station"]').value;
+        const endStation   = document.querySelector('select[name="end_station"]').value;
+        const travelDate   = document.getElementById('travel-date-input').value;
+        const cddList      = document.getElementById('cdd-list');
+        const cddTrigger   = document.getElementById('cdd-trigger');
+        const cddDisplay   = document.getElementById('cdd-display');
+
+        if (!travelDate || !startStation || !endStation || startStation === endStation) return;
+
+        cddList.innerHTML = '';
+        cddTrigger.disabled = true;
+        document.getElementById('train-no-value').value = '';
+        cddDisplay.innerHTML = '<span style="color:#adb5bd;">查詢中，請稍候…</span>';
+
+        try {
+            const url = getApiUrl(
+                `/api/get_trains?origin=${encodeURIComponent(startStation)}&destination=${encodeURIComponent(endStation)}&date=${travelDate}`
+            );
+            const res  = await fetch(url);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const json = await res.json();
+
+            if (json.status !== 'success' || !Array.isArray(json.trains) || json.trains.length === 0) {
+                cddDisplay.innerHTML = '<span style="color:#adb5bd;">查無班次，請確認日期及站別</span>';
+                return;
+            }
+
+            json.trains.forEach(t => {
+                const div = document.createElement('div');
+                div.className = 'cdd-item';
+                div.innerHTML = makeTrainHTML(t);
+                div.addEventListener('click', () => cddSelectTrain(t, div));
+                cddList.appendChild(div);
+            });
+
+            cddTrigger.disabled = false;
+            cddDisplay.innerHTML = `<span style="color:#adb5bd;">— 請選擇車次（共 ${json.trains.length} 班）—</span>`;
+
+        } catch (err) {
+            cddDisplay.innerHTML = '<span style="color:#c62828;">查詢失敗，請重試</span>';
+            console.error('loadTrainOptions error:', err);
+        } finally {
+            cddTrigger.disabled = false;
+        }
     }
 
     // 設定預設日期為今天
@@ -566,9 +688,12 @@
             }
         }
 
-        if(bookingMethod === 'radio33' && !form.train_no.value) {
-            alert('車次模式請輸入車次號碼');
-            return;
+        if(bookingMethod === 'radio33') {
+            const trainNoVal = document.getElementById('train-no-value').value;
+            if (!trainNoVal) {
+                alert('車次模式請從下拉選單選擇車次（點 🔍 查詢）');
+                return;
+            }
         }
 
         const data = {
@@ -577,7 +702,7 @@
             end_station: form.end_station.value,
             travel_date: form.travel_date.value,
             train_time: form.train_time.value,
-            train_no: form.train_no.value,
+            train_no: document.getElementById('train-no-value').value,
             seat_class: form.seat_class.value,
             seat_option: form.seat_option.value,
             passenger_internal_id: selectedOption.value,
@@ -605,7 +730,9 @@
     // 初始化
     document.addEventListener('DOMContentLoaded', async function() {
         initBookingMethodLogic();
+        initAutoTrainLoad();
         setDefaultDate();
+        loadTrainOptions();
         await loadPassengers();
         await fetchTasks();
     });
