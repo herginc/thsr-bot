@@ -449,6 +449,135 @@ def update_task_status(task_id: str, new_status: str, message: str):
         save_json(TASKS_FILE, booking_tasks)
 
 
+
+# -----------------------------------------------------------------------------
+# 查詢某'日期/班次'高鐵是否有大學生優惠票
+# [注意]: 班次一定要四碼, "508" 不行, 一定要 "0508" 才可以
+# [注意]: 班次若為三碼，程式要自動補 '0'。
+# -----------------------------------------------------------------------------
+
+import requests
+import json
+
+def check_discounts_for_list(StartStation, EndStation, target_date, train_no_list, discount_type):
+    """
+    批次檢查特定日期、多個車次是否有特定類別的優惠。
+    """
+    logger.info(f"[discount] >>> 開始查詢: {StartStation}→{EndStation} date={target_date} type={discount_type} trains={train_no_list}")
+
+    target_date = target_date.replace('-','/')
+
+    today = datetime.today().strftime('%Y/%m/%d')
+
+    api_url = "https://www.thsrc.com.tw/TimeTable/Search"
+    
+    # 優惠代碼對照表
+    discount_map = {
+        "早鳥": "e1b4c4d9-98d7-4c8c-9834-e1d2528750f1",
+        "大學生": "68d9fc7b-7330-44c2-962a-74bc47d2ee8a",
+        "少年": "d380e2a7-dbbd-471c-93b1-4e08a65438aa"
+    }
+
+    target_guid = discount_map.get(discount_type)
+    if not target_guid:
+        logger.error(f"[discount] 不支援的優惠類別 '{discount_type}'")
+        return {}
+
+    # logger.info(f"[discount] 優惠 GUID: {target_guid}")
+
+    # 站名中文 → THSR 官網英文代碼
+    STATION_NAME_MAP = {
+        '南港': 'NanGang',
+        '台北': 'TaiPei',
+        '板橋': 'BanQiao',
+        '桃園': 'TaoYuan',
+        '新竹': 'XinZhu',
+        '苗栗': 'MiaoLi',
+        '台中': 'TaiChung',
+        '彰化': 'ZhangHua',
+        '雲林': 'YunLin',
+        '嘉義': 'JiaYi',
+        '台南': 'TaiNan',
+        '左營': 'ZuoYing',
+    }
+
+    start_en = STATION_NAME_MAP.get(StartStation, StartStation)
+    end_en   = STATION_NAME_MAP.get(EndStation, EndStation)
+    logger.info(f"[discount] 站名轉換: '{StartStation}'→'{start_en}', '{EndStation}'→'{end_en}'")
+
+    payload = {
+        "SearchType": "S",
+        "Lang": "TW",
+        "StartStation": start_en,
+        "EndStation": end_en,
+        "OutWardSearchDate": target_date,
+        "OutWardSearchTime": "05:00",
+        "ReturnSearchDate": today,
+        "ReturnSearchTime": "05:00",
+        "DiscountType": target_guid
+    }
+
+    logger.info(f"[discount] POST payload: {payload}")
+
+    headers = {
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "x-requested-with": "XMLHttpRequest",
+        "Referer": "https://www.thsrc.com.tw/ArticleContent/A3B630BB-1066-4352-A1EF-58C7B4E8EF7C",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+    }
+
+    results = {}
+    try:
+        session = requests.Session()
+        logger.info(f"[discount] GET https://www.thsrc.com.tw/ (取得 cookie)...")
+        r0 = session.get("https://www.thsrc.com.tw/", headers=headers, timeout=10)
+        logger.info(f"[discount] GET 狀態碼: {r0.status_code}, cookies: {dict(session.cookies)}")
+
+        logger.info(f"[discount] POST {api_url} ...")
+        response = session.post(api_url, data=payload, headers=headers, timeout=10)
+        logger.info(f"[discount] POST 狀態碼: {response.status_code}")
+        logger.info(f"[discount] 回應內容 (前500字): {response.text[:500]}")
+
+        if response.status_code == 200:
+            data = response.json()
+
+            # 紀錄完整 JSON 結構的 key，方便確認結構是否如預期
+            logger.info(f"[discount] JSON top-level keys: {list(data.keys())}")
+            data_block = data.get("data", {})
+            logger.info(f"[discount] data block keys: {list(data_block.keys()) if isinstance(data_block, dict) else type(data_block)}")
+            dep_table = data_block.get("DepartureTable", {})
+            logger.info(f"[discount] DepartureTable keys: {list(dep_table.keys()) if isinstance(dep_table, dict) else type(dep_table)}")
+            train_items = dep_table.get("TrainItem", [])
+            logger.info(f"[discount] TrainItem 筆數: {len(train_items)}")
+
+            # 取得所有有該優惠的車次編號
+            available_trains = [
+                t.get("TrainNumber")
+                for t in train_items
+            ]
+            logger.info(f"[discount] 有優惠的車次清單: {available_trains}")
+
+            # 比對清單
+            for no in train_no_list:
+                matched = no in available_trains
+                results[no] = matched
+                if matched:
+                    # logger.info(f"[discount] ✔ 車次 {no} 有優惠")
+                    pass
+                else:
+                    # logger.debug(f"[discount] 車次 {no} 無優惠")
+                    pass
+
+        else:
+            logger.error(f"[discount] API 請求失敗: HTTP {response.status_code}, body: {response.text[:300]}")
+
+    except Exception as e:
+        logger.error(f"[discount] 執行錯誤: {e}", exc_info=True)
+
+    # logger.info(f"[discount] <<< 查詢結果: {results}")
+    return results
+
+
 # ----------------------------------------------------------------------------
 # Worker Function for booking.py (Req 0, 1, 4, 5)
 # ----------------------------------------------------------------------------
@@ -944,6 +1073,26 @@ def api_get_trains():
             destination_name=destination,
             train_date=date,
         )
+
+        # 查詢大學生優惠，失敗時回傳空 dict，不影響主流程
+        train_no_list = [t['train_no'] for t in trains]
+        logger.info(f'api_get_trains: 開始查詢大學生優惠，共 {len(train_no_list)} 班')
+        discount_map = check_discounts_for_list(
+            StartStation=origin,
+            EndStation=destination,
+            target_date=date,
+            train_no_list=train_no_list,
+            discount_type='大學生',
+        )
+        # logger.info(f'api_get_trains: 優惠查詢結果 {discount_map}')
+
+        # 有優惠的班次在 label 末尾加 ' *'
+        for t in trains:
+            has_discount = discount_map.get(t['train_no'], False)
+            t['has_discount'] = has_discount
+            if has_discount:
+                t['label'] = t['label'] + ' *'
+
         return jsonify({'status': 'success', 'trains': trains})
 
     except ValueError as e:

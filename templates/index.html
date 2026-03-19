@@ -80,6 +80,8 @@
         .t-sep  { color: #999; }
         .t-time { color: #2e7d32; }
         .t-dur  { color: #6a1e8a; }
+        .t-discount { color: #e65100; font-weight: bold; }
+        .t-pad  { color: transparent; user-select: none; }
         @media (max-width: 768px) {
             header { font-size: 1.5rem; padding: 1rem 0; }
             .container { padding: 1.5rem 1rem; }
@@ -383,7 +385,10 @@
     // 自訂車次下拉元件
     // -----------------------------------------------------------------------
     function makeTrainHTML(t) {
-        return `<span class="t-no">${t.train_no}</span><span class="t-sep">, </span><span class="t-time">${t.dep_time}-${t.arr_time}</span><span class="t-sep"> </span><span class="t-dur">(${t.duration_min}分)</span>`;
+        const prefix = t.has_discount
+            ? `<span class="t-discount">* </span>`
+            : `<span class="t-pad">* </span>`;
+        return `${prefix}<span class="t-no">${t.train_no}</span><span class="t-sep">, </span><span class="t-time">${t.dep_time}-${t.arr_time}</span><span class="t-sep"> </span><span class="t-dur">(${t.duration_min}分)</span>`;
     }
 
     function cddToggle() {
