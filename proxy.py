@@ -1182,42 +1182,84 @@ def thsr_run_booking_flow(
         status_updater(task_id, 'running', '表單元素解析成功。下載驗證碼圖片中...')
 
         # ------------------------------------------------------------------
-        # 步驟 4: 下載驗證碼並識別
+        # 步驟 4 & 5: 下載驗證碼、識別並提交訂票表單 (含驗證碼錯誤重試，最多 5 次)
         # ------------------------------------------------------------------
         sleep_range(5, 6)
 
-        if cancel_event.is_set():
-            raise Exception("放棄運行中任務4")
+        CAPTCHA_ERROR_MSG = '檢測碼輸入錯誤，請確認後重新輸入'
+        MAX_CAPTCHA_RETRY = 5
+        is_error_found = False
+        errmsg_set = None
 
-        passcode = None
-        if captcha_passcode_url:
-            logger.info("--- Download Captcha Image ---")
-            sleep_range(0, 1)
-            passcode = save_and_parse_captcha_image(session, captcha_passcode_url)
-        
-        if not passcode:
-            raise Exception("驗證碼取得或識別失敗。")
-        
-        logger.info(YELLOW + f"passcode = {passcode}" + RESET)
-        status_updater(task_id, 'running', f'驗證碼識別成功。提交訂票表單中...')
+        for captcha_attempt in range(1, MAX_CAPTCHA_RETRY + 1):
 
-        # ------------------------------------------------------------------
-        # 步驟 5: 提交訂票表單 (第一頁)
-        # ------------------------------------------------------------------
-        if cancel_event.is_set():
-            raise Exception("取消運行中任務5")
+            if cancel_event.is_set():
+                raise Exception("放棄運行中任務4")
 
-        sleep_range(2, 3)
-        page = thsr_submit_booking_form(session, page, booking_form_submit_url, passcode, task_data)
+            # 步驟 4: 若非第一次，重新載入訂票首頁以取得全新的 captcha
+            if captcha_attempt > 1:
+                logger.info(f"驗證碼錯誤，第 {captcha_attempt} 次重試，重新載入訂票頁面...")
+                status_updater(task_id, 'running', f'驗證碼錯誤，重新載入訂票頁面中... (第 {captcha_attempt}/{MAX_CAPTCHA_RETRY} 次)')
 
-        is_error_found, errmsg_set = check_and_print_errors(page)
+                sleep_range(2, 3)
+
+                # 重新載入訂票首頁（取得全新的 session 狀態與 captcha）
+                page = thsr_load_booking_page(session)
+                if not page:
+                    raise Exception("重試時無法載入訂票頁面。")
+
+                # 從新頁面解析 captcha URL 及 submit URL
+                fresh_booking_form = parse_booking_form_element_id(session, page)
+                if not fresh_booking_form:
+                    raise Exception("重試時訂票頁面解析失敗。")
+
+                captcha_passcode_url    = fresh_booking_form['captcha_image_url']
+                captcha_reload_url      = fresh_booking_form['captcha_reload_url']
+                booking_form_submit_url = fresh_booking_form['booking_submit_url']
+
+                sleep_range(1, 2)
+
+            # 下載並識別驗證碼
+            passcode = None
+            if captcha_passcode_url:
+                logger.info(f"--- Download Captcha Image (attempt {captcha_attempt}) ---")
+                sleep_range(0, 1)
+                passcode = save_and_parse_captcha_image(session, captcha_passcode_url)
+
+            if not passcode:
+                logger.warning(f"驗證碼取得或識別失敗 (attempt {captcha_attempt})，繼續重試...")
+                is_error_found = True
+                errmsg_set = {CAPTCHA_ERROR_MSG}
+                continue
+
+            logger.info(YELLOW + f"passcode = {passcode} (attempt {captcha_attempt})" + RESET)
+            status_updater(task_id, 'running', f'驗證碼識別成功 ({captcha_attempt}/{MAX_CAPTCHA_RETRY})。提交訂票表單中...')
+
+            # 步驟 5: 提交訂票表單 (第一頁)
+            if cancel_event.is_set():
+                raise Exception("取消運行中任務5")
+
+            sleep_range(2, 3)
+            page = thsr_submit_booking_form(session, page, booking_form_submit_url, passcode, task_data)
+
+            is_error_found, errmsg_set = check_and_print_errors(page)
+
+            if not is_error_found:
+                # 表單提交成功，跳出重試迴圈
+                break
+
+            # 發生錯誤：判斷是否為驗證碼錯誤，若是才重試
+            if errmsg_set and any(CAPTCHA_ERROR_MSG in msg for msg in errmsg_set):
+                logger.warning(f"驗證碼輸入錯誤 (attempt {captcha_attempt}/{MAX_CAPTCHA_RETRY})，準備重試...")
+                if captcha_attempt == MAX_CAPTCHA_RETRY:
+                    logger.error("已達驗證碼重試上限，放棄此次訂票。")
+            else:
+                # 非驗證碼錯誤（例如日期有誤、票種錯誤等），不重試，直接失敗
+                logger.error(f"表單提交失敗 (非驗證碼錯誤)：{errmsg_set}")
+                break
 
         if is_error_found:
-            # 驗證碼錯誤或表單錯誤，本輪失敗 (呼叫端的 while loop 可決定是否重試)
-            # result_message = "訂票表單提交失敗：驗證碼錯誤或欄位有誤。"     # [scott@2026-03-15] 直接使用Server回覆的訊息 (無 '欄位有誤')
-            # errmsg_str = str(errmsg_set)
-            # result_message = errmsg_str    # [scott@2026-03-16] should translate errmsg_list to errmsg_str
-            result_message = "".join(errmsg_set)  # 把集合裡的字串合併
+            result_message = "".join(errmsg_set) if errmsg_set else "訂票表單提交失敗。"
             booking_NG += 1
             return "booking_failed", result_message
 
@@ -1230,69 +1272,240 @@ def thsr_run_booking_flow(
             logger.info(f"HTML content saved to {filename}")
 
         # ------------------------------------------------------------------
-        # 步驟 6: 選擇車次並取得提交資料
+        # 步驟 6: 判斷目前頁面是第二頁（選車）或第三頁（乘客資料）
+        # 車次模式 (radio33) 下，高鐵會直接跳過選車頁，進入乘客資料頁
         # ------------------------------------------------------------------
         if cancel_event.is_set():
             raise Exception("取消運行中任務6")
 
-        train_no = str(task_data.get('train_no', '') or '').strip()
-        train_time = str(task_data.get('train_time', '') or '').strip()
+        page_soup = BeautifulSoup(page, 'html.parser')
+        is_s3_page = page_soup.find('form', id='BookingS3FormSP') is not None
+        is_s2_page = page_soup.find('form', id='BookingS2Form') is not None
 
-        if train_no:
-            # 依車次號碼選擇
-            submission_info = select_train_and_submit(page, '車次', [train_no])
+        if is_s3_page:
+            # 已直接到達第三頁（乘客資料），不需要選車
+            logger.info("偵測到 BookingS3FormSP，已跳過選車頁，直接進入乘客資料頁。")
+            status_updater(task_id, 'running', '已進入乘客資料頁。填寫乘客資料中...')
+            s3_page = page     # 直接使用目前的 page
+            s3_response_text = page
+
+        elif is_s2_page:
+            # 正常第二頁（選車）
+            train_no = str(task_data.get('train_no', '') or '').strip()
+            train_time = str(task_data.get('train_time', '') or '').strip()
+
+            if train_no:
+                submission_info = select_train_and_submit(page, '車次', [train_no])
+            else:
+                if not train_time:
+                    raise ValueError("缺少 train_time（HH:MM）或 train_no（車次號碼），無法選擇車次。")
+                submission_info = select_train_and_submit(page, '時間', [train_time])
+
+            if not isinstance(submission_info, dict):
+                result_message = f"選車失敗：{submission_info}"
+                booking_NG += 1
+                return False, result_message
+
+            submission_url  = submission_info['url']
+            submission_data = submission_info['data']
+            status_updater(task_id, 'running', '車次選擇完成。送出訂位請求中...')
+
+            # ------------------------------------------------------------------
+            # 步驟 7: POST 送出訂位（第二頁 → 第三頁）
+            # ------------------------------------------------------------------
+            if cancel_event.is_set():
+                raise Exception("取消運行中任務7")
+
+            resp_s3 = session.post(
+                BASE_URL + submission_url,
+                headers=http_headers,
+                data=submission_data,
+                allow_redirects=True,
+                timeout=http_timeout
+            )
+            resp_s3.raise_for_status()
+            s3_response_text = resp_s3.text
+
+            if SAVE_BOOKING_PAGE:
+                filename = os.path.join(OUTPUT_DIR, "booking_3rd_page.html")
+                with open(filename, "w", encoding="utf-8") as file:
+                    file.write(s3_response_text)
+                logger.info(f"HTML content saved to {filename}")
+
         else:
-            # 依時間 (HH:MM) 選擇
-            if not train_time:
-                raise ValueError("缺少 train_time（HH:MM）或 train_no（車次號碼），無法選擇車次。")
-            submission_info = select_train_and_submit(page, '時間', [train_time])
-
-        if not isinstance(submission_info, dict):
-            result_message = f"選車失敗：{submission_info}"
-            booking_NG += 1
-            return False, result_message
-
-        submission_url  = submission_info['url']
-        submission_data = submission_info['data']
-        status_updater(task_id, 'running', f'車次選擇完成。送出訂位請求中...')
+            raise Exception("無法判斷訂票頁面狀態：找不到 BookingS2Form 或 BookingS3FormSP。")
 
         # ------------------------------------------------------------------
-        # 步驟 7: POST 送出訂位
+        # 步驟 7b: 填寫乘客資料並送出（BookingS3FormSP）
+        # 流程:
+        #   第一次 POST (memberAct='') →
+        #     一般票: 直接完成 → 步驟 8
+        #     早鳥票: server 回傳確認頁 (memberAct='earlyBird') →
+        #       第二次 POST (memberAct='') → 步驟 8
         # ------------------------------------------------------------------
         if cancel_event.is_set():
-            raise Exception("取消運行中任務7")
+            raise Exception("取消運行中任務7b")
 
-        response = session.post(
-            BASE_URL + submission_url,
-            headers=http_headers,
-            data=submission_data,
-            allow_redirects=True,
-            timeout=http_timeout
-        )
-        response.raise_for_status()
+        personal_id = task_data.get('personal_id', '')
+        phone_num   = task_data.get('phone_num', '')
+        email       = task_data.get('email', '')
+
+        def _build_s3_post(page_text, override_member_act=None):
+            """從頁面動態讀取所有表單欄位，疊加乘客資料，回傳 (full_url, form_data)。"""
+            _soup = BeautifulSoup(page_text, 'html.parser')
+            _form = _soup.find('form', id='BookingS3FormSP')
+            if not _form:
+                raise Exception("找不到 BookingS3FormSP，無法建立 POST 資料。")
+
+            # 注入 jsessionid（S3 action 不含 jsessionid，必須手動補上）
+            _action_raw = _form.get('action', '')
+            _action = inject_jsessionid_to_url(session, _action_raw) or _action_raw
+            _full_url = BASE_URL + _action
+            logger.info(CYAN + "S3 POST URL: %s" % _full_url + RESET)
+
+            # 讀取所有 hidden inputs
+            _data = {}
+            for inp in _form.find_all('input', type='hidden'):
+                n = inp.get('name')
+                if n:
+                    _data[n] = inp.get('value', '')
+
+            # 讀取 select（取選中的 option，找不到就取第一個）
+            for sel in _form.find_all('select'):
+                n = sel.get('name')
+                if not n:
+                    continue
+                opt = sel.find('option', selected=True) or sel.find('option')
+                _data[n] = opt.get('value', '') if opt else ''
+
+            # 讀取預設勾選的 radio（checked 屬性存在即為選中）
+            _radio_done = set()
+            for inp in _form.find_all('input', type='radio'):
+                n = inp.get('name')
+                if n and n not in _radio_done and inp.get('checked') is not None:
+                    _data[n] = inp.get('value', '')
+                    _radio_done.add(n)
+
+            # 乘客資料（覆寫頁面空值）
+            _data['dummyId']    = personal_id
+            _data['dummyPhone'] = phone_num
+            _data['email']      = email
+
+            # agree checkbox: value 屬性不存在時，瀏覽器勾選送 'on'
+            _agree_inp = _form.find('input', {'name': 'agree'})
+            if _agree_inp is not None:
+                _agree_val = _agree_inp.get('value')
+                _data['agree'] = _agree_val if _agree_val else 'on'
+
+            # 早鳥票: 填入乘客身分證字號（passengerDataIdNumber）
+            _ps_id_key = ('TicketPassengerInfoInputPanel:passengerDataView:0'
+                          ':passengerDataView2:passengerDataIdNumber')
+            if _soup.find('input', {'name': _ps_id_key}) is not None:
+                _data[_ps_id_key] = personal_id
+
+            # 早鳥票: passengerDataInputChoice select（身分證=0）
+            _ps_choice_key = ('TicketPassengerInfoInputPanel:passengerDataView:0'
+                              ':passengerDataView2:passengerDataInputChoice')
+            if _ps_choice_key not in _data:
+                _ps_sel = _soup.find('select', {'name': _ps_choice_key})
+                if _ps_sel:
+                    _opt = _ps_sel.find('option', selected=True) or _ps_sel.find('option')
+                    _data[_ps_choice_key] = _opt.get('value', '0') if _opt else '0'
+
+            # 強制覆寫 memberAct（JS 在 submit 前會設為 ''）
+            if override_member_act is not None:
+                _data['memberAct'] = override_member_act
+
+            # JS 呼叫 form.submit()，不帶任何 submit/button 的 value
+            for k in ('SubmitButton', 'goBackM', 'goBackTGO', 'SubmitPassButton'):
+                _data.pop(k, None)
+
+            logger.info(CYAN + "S3 form_data: %s" % _data + RESET)
+            return _full_url, _data
+
+        # --- 第一次 POST ---
+        logger.info("提交乘客資料 (POST 1): personal_id=%r, phone=%r" % (personal_id, phone_num))
+        status_updater(task_id, 'running', '送出乘客資料中...')
+
+        s3_url1, s3_data1 = _build_s3_post(s3_response_text, override_member_act='')
+        sleep_range(1, 2)
+
+        resp1 = session.post(s3_url1, headers=http_headers, data=s3_data1,
+                             allow_redirects=True, timeout=http_timeout)
+        resp1.raise_for_status()
+        logger.info(CYAN + "S3 POST1: status=%s url=%s" % (resp1.status_code, resp1.url) + RESET)
 
         if SAVE_BOOKING_PAGE:
-            filename = os.path.join(OUTPUT_DIR, "booking_3rd_page.html")
-            with open(filename, "w", encoding="utf-8") as file:
-                file.write(response.text)
-            logger.info(f"HTML content saved to {filename}")
+            with open(os.path.join(OUTPUT_DIR, "booking_s3_post1.html"), "w", encoding="utf-8") as _f:
+                _f.write(resp1.text)
+
+        # feedbackPanelERROR → 表單填寫錯誤，直接失敗
+        _err_found, _errmsg = check_and_print_errors(resp1.text)
+        if _err_found:
+            result_message = "".join(_errmsg) if _errmsg else "乘客資料提交失敗。"
+            booking_NG += 1
+            return "booking_failed", result_message
+
+        # 判斷是否為早鳥確認頁（需第二次 POST）
+        # 條件: 頁面上仍有 BookingS3FormSP（尚未完成）
+        #       且 memberAct 為 'earlyBird'/'check' 或 isEarlyBirdRegister='0'
+        # 若已跳到 S4 付款頁（BookingS4Form），代表訂位已完成，不需第二次 POST
+        _r1_soup      = BeautifulSoup(resp1.text, 'html.parser')
+        _still_s3     = _r1_soup.find('form', id='BookingS3FormSP') is not None
+        _ma_inp       = _r1_soup.find('input', {'name': 'memberAct'})
+        _ma_val       = _ma_inp.get('value', '') if _ma_inp else ''
+        _eb_inp       = _r1_soup.find('input', {'name': 'isEarlyBirdRegister'})
+        _eb_val       = _eb_inp.get('value', '1') if _eb_inp else '1'
+        need_confirm  = _still_s3 and (
+            (_ma_val in ('earlyBird', 'check')) or (_eb_val == '0')
+        )
+        logger.info("need_confirm=%s still_s3=%s (memberAct=%r, isEarlyBirdRegister=%r)" % (
+            need_confirm, _still_s3, _ma_val, _eb_val))
+
+        if need_confirm:
+            status_updater(task_id, 'running', '早鳥票確認中，送出第二次確認...')
+            logger.info("偵測到早鳥確認頁，送出第二次 POST (memberAct='')...")
+            s3_url2, s3_data2 = _build_s3_post(resp1.text, override_member_act='')
+            sleep_range(1, 2)
+            resp_final = session.post(s3_url2, headers=http_headers, data=s3_data2,
+                                      allow_redirects=True, timeout=http_timeout)
+            resp_final.raise_for_status()
+            logger.info(CYAN + "S3 POST2: status=%s url=%s" % (resp_final.status_code, resp_final.url) + RESET)
+        else:
+            resp_final = resp1
+
+        if SAVE_BOOKING_PAGE:
+            with open(os.path.join(OUTPUT_DIR, "booking_final_page.html"), "w", encoding="utf-8") as _f:
+                _f.write(resp_final.text)
+            logger.info("HTML content saved to booking_final_page.html")
 
         # ------------------------------------------------------------------
         # 步驟 8: 解析訂位代號
         # ------------------------------------------------------------------
-        # 嘗試從回應頁面中解析訂位代號
-        booking_code_match = re.search(r'訂位代號[：:]\s*([A-Z0-9]{4,10})', response.text)
-        if booking_code_match:
-            booking_code = booking_code_match.group(1)
+        # 優先從 <p class="pnr-code"> 取得（最精確）
+        # fallback: regex 匹配 '訂位代號' 後面（含換行）的英數字碼
+        # ------------------------------------------------------------------
+        _final_soup = BeautifulSoup(resp_final.text, 'html.parser')
+        _pnr_el = _final_soup.find('p', class_='pnr-code')
+        if _pnr_el:
+            booking_code = _pnr_el.get_text(strip=True)
+        else:
+            _m = re.search(r'訂位代號[：:\s]*([A-Z0-9]{4,12})', resp_final.text)
+            booking_code = _m.group(1) if _m else None
+
+        if booking_code:
             result_message = f"訂位代號: {booking_code}"
             booking_success = True
             booking_OK += 1
             status_updater(task_id, 'running', f'訂位成功！{result_message}')
         else:
-            result_message = "訂位請求已送出，但搶輸訂位" # [scott@2026-03-17] 應該是搶輸訂位, should save webpage for debugging
-            # result_message = "訂位請求已送出，但未能解析訂位代號，請至官網確認。" # [scott@2026-03-17] 應該是搶輸訂位
+            result_message = "訂位請求已送出，但搶輸訂位"
             booking_NG += 1
             status_updater(task_id, 'running', result_message)
+            if SAVE_BOOKING_PAGE:
+                with open(os.path.join(OUTPUT_DIR, "booking_failed_page.html"), "w", encoding="utf-8") as _f:
+                    _f.write(resp_final.text)
+                logger.info("Failed page saved to booking_failed_page.html for debugging.")
             return "booking_failed", result_message
 
         return "booking_success", result_message
