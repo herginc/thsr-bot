@@ -30,8 +30,8 @@ from tdx_api import get_thsr_timetable_od_by_name
 # True  → 使用 booking.thsr_run_booking_flow_with_data (模擬版本，用於開發/測試)
 # False → 使用 proxy.thsr_run_booking_flow             (真實版本，連接高鐵官網)
 # ----------------------------------------------------------------------------
-# USE_MOCK_BOOKING = True
-USE_MOCK_BOOKING = False
+USE_MOCK_BOOKING = True
+# USE_MOCK_BOOKING = False
 
 
 # ----------------------------------------------------------------------------
@@ -359,8 +359,6 @@ def load_history():
         return retained_history
 
 
-# XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-
 # ----------------------------------------------------------------------------
 # task_id format: YYYYMMDD-NN
 # YYYYMMDD = datetime.now(CST_TIMEZONE).strftime('%Y%m%d') = 當天日期
@@ -463,7 +461,7 @@ def check_discounts_for_list(StartStation, EndStation, target_date, train_no_lis
     """
     批次檢查特定日期、多個車次是否有特定類別的優惠。
     """
-    logger.info(f"[discount] >>> 開始查詢: {StartStation}→{EndStation} date={target_date} type={discount_type} trains={train_no_list}")
+    logger.debug(f">>> 開始查詢: {StartStation}→{EndStation} date={target_date} type={discount_type} trains={train_no_list}")
 
     target_date = target_date.replace('-','/')
 
@@ -480,10 +478,10 @@ def check_discounts_for_list(StartStation, EndStation, target_date, train_no_lis
 
     target_guid = discount_map.get(discount_type)
     if not target_guid:
-        logger.error(f"[discount] 不支援的優惠類別 '{discount_type}'")
+        logger.error(f"不支援的優惠類別 '{discount_type}'")
         return {}
 
-    # logger.info(f"[discount] 優惠 GUID: {target_guid}")
+    # logger.debug(f"優惠 GUID: {target_guid}")
 
     # 站名中文 → THSR 官網英文代碼
     STATION_NAME_MAP = {
@@ -503,7 +501,8 @@ def check_discounts_for_list(StartStation, EndStation, target_date, train_no_lis
 
     start_en = STATION_NAME_MAP.get(StartStation, StartStation)
     end_en   = STATION_NAME_MAP.get(EndStation, EndStation)
-    logger.info(f"[discount] 站名轉換: '{StartStation}'→'{start_en}', '{EndStation}'→'{end_en}'")
+
+    logger.debug(f"站名轉換: '{StartStation}'→'{start_en}', '{EndStation}'→'{end_en}'")
 
     payload = {
         "SearchType": "S",
@@ -517,7 +516,7 @@ def check_discounts_for_list(StartStation, EndStation, target_date, train_no_lis
         "DiscountType": target_guid
     }
 
-    logger.info(f"[discount] POST payload: {payload}")
+    logger.debug(f"POST payload: {payload}")
 
     headers = {
         "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
@@ -529,52 +528,52 @@ def check_discounts_for_list(StartStation, EndStation, target_date, train_no_lis
     results = {}
     try:
         session = requests.Session()
-        logger.info(f"[discount] GET https://www.thsrc.com.tw/ (取得 cookie)...")
+        logger.debug(f"GET https://www.thsrc.com.tw/ (取得 cookie)...")
         r0 = session.get("https://www.thsrc.com.tw/", headers=headers, timeout=10)
-        logger.info(f"[discount] GET 狀態碼: {r0.status_code}, cookies: {dict(session.cookies)}")
+        logger.debug(f"GET 狀態碼: {r0.status_code}, cookies: {dict(session.cookies)}")
 
-        logger.info(f"[discount] POST {api_url} ...")
+        logger.debug(f"POST {api_url} ...")
         response = session.post(api_url, data=payload, headers=headers, timeout=10)
-        logger.info(f"[discount] POST 狀態碼: {response.status_code}")
-        logger.info(f"[discount] 回應內容 (前500字): {response.text[:500]}")
+        logger.debug(f"POST 狀態碼: {response.status_code}")
+        logger.debug(f"回應內容 (前500字): {response.text[:500]}")
 
         if response.status_code == 200:
             data = response.json()
 
             # 紀錄完整 JSON 結構的 key，方便確認結構是否如預期
-            logger.info(f"[discount] JSON top-level keys: {list(data.keys())}")
+            logger.debug(f"JSON top-level keys: {list(data.keys())}")
             data_block = data.get("data", {})
-            logger.info(f"[discount] data block keys: {list(data_block.keys()) if isinstance(data_block, dict) else type(data_block)}")
+            logger.debug(f"data block keys: {list(data_block.keys()) if isinstance(data_block, dict) else type(data_block)}")
             dep_table = data_block.get("DepartureTable", {})
-            logger.info(f"[discount] DepartureTable keys: {list(dep_table.keys()) if isinstance(dep_table, dict) else type(dep_table)}")
+            logger.debug(f"DepartureTable keys: {list(dep_table.keys()) if isinstance(dep_table, dict) else type(dep_table)}")
             train_items = dep_table.get("TrainItem", [])
-            logger.info(f"[discount] TrainItem 筆數: {len(train_items)}")
+            logger.debug(f"TrainItem 筆數: {len(train_items)}")
 
             # 取得所有有該優惠的車次編號
             available_trains = [
                 t.get("TrainNumber")
                 for t in train_items
             ]
-            logger.info(f"[discount] 有優惠的車次清單: {available_trains}")
+            logger.info(f"{discount_type}優惠車次清單: {available_trains}")
 
             # 比對清單
             for no in train_no_list:
                 matched = no in available_trains
                 results[no] = matched
                 if matched:
-                    # logger.info(f"[discount] ✔ 車次 {no} 有優惠")
+                    # logger.debug(f"✔ 車次 {no} 有優惠")
                     pass
                 else:
-                    # logger.debug(f"[discount] 車次 {no} 無優惠")
+                    # logger.debug(f"車次 {no} 無優惠")
                     pass
 
         else:
-            logger.error(f"[discount] API 請求失敗: HTTP {response.status_code}, body: {response.text[:300]}")
+            logger.error(f"API 請求失敗: HTTP {response.status_code}, body: {response.text[:300]}")
 
     except Exception as e:
-        logger.error(f"[discount] 執行錯誤: {e}", exc_info=True)
+        logger.error(f"執行錯誤: {e}", exc_info=True)
 
-    # logger.info(f"[discount] <<< 查詢結果: {results}")
+    logger.debug(f"<<< 查詢結果: {results}")
     return results
 
 
@@ -638,7 +637,7 @@ def run_booking_worker():
                     else proxy.thsr_run_booking_flow
                 )
 
-                success, result_msg = booking_fn(
+                final_status, result_msg = booking_fn(
                     task_to_run['task_id'], 
                     task_to_run['data'], 
                     current_cancel_event,
@@ -647,8 +646,6 @@ def run_booking_worker():
 
                 # [scott@2026-03-12] final_status 不應該只有 'success' or 'failed', 應該有 '成功', '失敗', '放棄', '取消' or '中斷' & '不明原因'
                 # [scott@2026-03-17] final_status: 'booking_success', 'booking_failed', 'task_cancelled', 'task_aborted' or 'unknown_result'
-                # final_status = 'success' if success else 'failed'
-                final_status = success
 
                 print(GREEN)
                 print('*' * 80)
@@ -672,7 +669,7 @@ def run_booking_worker():
                     
                     # 如果成功，將結果寫入 history.json (略過)
                     # 確保將訂位代號存入 task 物件
-                    if final_status == 'success' and '訂位代號:' in result_msg:
+                    if final_status == 'booking_success' and '訂位代號:' in result_msg:
                         # 從結果訊息中解析出訂位代號並儲存
                         match = re.search(r'訂位代號: (\w+)', result_msg)
                         if match:
@@ -884,7 +881,7 @@ def get_booking_status():
             'message': task['message'],
             'submit_time': task['submit_time'],
             'update_time': task['update_time'],
-            'train_info': f"從 {data.get('start_station', '?')} 到 {data.get('end_station', '?')} ({data.get('travel_date', '?')} {data.get('train_time', '?')})",
+            'train_info': f"從 {data.get('start_station', '?')} 到 {data.get('end_station', '?')} ({data.get('travel_date', '?')} {data.get('train_time', '?')} {data.get('train_no', '')})",
             'passenger_name': data.get('name', '?')
         })
         
@@ -1074,9 +1071,10 @@ def api_get_trains():
             train_date=date,
         )
 
-        # 查詢大學生優惠，失敗時回傳空 dict，不影響主流程
         train_no_list = [t['train_no'] for t in trains]
-        logger.info(f'api_get_trains: 開始查詢大學生優惠，共 {len(train_no_list)} 班')
+        logger.info(f'({date} {origin}-{destination}) 高鐵班次共有{len(train_no_list)}班: {train_no_list}')
+
+        # 查詢大學生優惠，失敗時回傳空 dict，不影響主流程
         discount_map = check_discounts_for_list(
             StartStation=origin,
             EndStation=destination,
@@ -1084,8 +1082,8 @@ def api_get_trains():
             train_no_list=train_no_list,
             discount_type='大學生',
         )
-        # logger.info(f'api_get_trains: 優惠查詢結果 {discount_map}')
-
+        # logger.info(f'大學生優惠票查詢結果 {discount_map}')
+    
         # 有優惠的班次在 label 末尾加 ' *'
         for t in trains:
             has_discount = discount_map.get(t['train_no'], False)

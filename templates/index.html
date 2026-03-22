@@ -51,9 +51,16 @@
         
         .status-pending { color: #f57c00; font-weight: bold; }
         .status-running { color: #1976d2; font-weight: bold; }
+        .status-cancelling { color: #7b1fa2; font-weight: bold; }
         .status-success { color: #388e3c; font-weight: bold; }
         .status-failed { color: #d32f2f; font-weight: bold; }
         .status-cancelled { color: #9e9e9e; font-weight: bold; }
+        .status-booking_success { color: #388e3c; font-weight: bold; }
+        .status-booking_failed { color: #d32f2f; font-weight: bold; }
+        .status-task_cancelled { color: #9e9e9e; font-weight: bold; }
+        .status-task_aborted { color: #795548; font-weight: bold; }
+        .status-task_deleted { color: #9e9e9e; font-weight: bold; }
+        .status-unknown_result { color: #e65100; font-weight: bold; }
         
         .radio-group { display: flex; gap: 1rem; align-items: center; border: 1px solid #eee; padding: 0.4rem 0.8rem; border-radius: 5px; background: #fff; }
         .radio-group label { flex-direction: row !important; gap: 0.4rem; cursor: pointer; font-weight: normal; min-width: auto; align-items: center; }
@@ -82,7 +89,13 @@
         .t-dur  { color: #6a1e8a; }
         .t-discount { color: #e65100; font-weight: bold; }
         .t-pad  { color: transparent; user-select: none; }
+        /* 標籤全名/簡稱切換 */
+        .label-short { display: none; }
+        .label-full  { display: inline; }
+
         @media (max-width: 768px) {
+            .label-short { display: inline; }
+            .label-full  { display: none; }
             header { font-size: 1.5rem; padding: 1rem 0; }
             .container { padding: 1.5rem 1rem; }
             .row-top { flex-direction: column; align-items: stretch; gap: 1rem; padding-bottom: 1rem; }
@@ -94,9 +107,10 @@
             .right-group .label-horizontal { width: 100%; justify-content: space-between; }
             .row-bottom { flex-direction: column; align-items: stretch; gap: 0.8rem; }
             .row-bottom label { flex-direction: row !important; align-items: center; justify-content: space-between; width: 100%; min-width: unset; }
-            .row-bottom label span { flex: 0 0 80px; margin-top: 0; }
+            .row-bottom label span { flex: 0 0 44px; margin-top: 0; }
             .row-bottom label input, .row-bottom label select { flex: 1; margin-top: 0; }
             .submit-btn { width: 100%; height: 50px; font-size: 1.1rem; margin-top: 1rem; }
+            .col-id { display: none; }
         }
     </style>
 </head>
@@ -150,7 +164,7 @@
 
             <div class="form-row row-bottom">
                 <label class="label-horizontal">
-                    <span>出發站</span>
+                    <span class="label-full">出發站</span><span class="label-short">出發</span>
                     <select name="start_station">
                         <option value="南港">南港</option>
                         <option value="台北">台北</option>
@@ -168,7 +182,7 @@
                 </label>
 
                 <label class="label-horizontal">
-                    <span>到達站</span>
+                    <span class="label-full">到達站</span><span class="label-short">到達</span>
                     <select name="end_station">
                         <option value="南港">南港</option>
                         <option value="台北" selected>台北</option>
@@ -186,12 +200,12 @@
                 </label>
 
                 <label class="label-horizontal">
-                    <span>乘車日期</span>
+                    <span class="label-full">乘車日期</span><span class="label-short">日期</span>
                     <input type="date" name="travel_date" id="travel-date-input" required>
                 </label>
 
                 <label class="label-horizontal">
-                    <span>乘車時間</span>
+                    <span class="label-full">乘車時間</span><span class="label-short">時間</span>
                     <select name="train_time" class="TimeTable">
                         <option selected="selected" value="">請選擇...</option>
                         <option value="00:00">00:00</option>
@@ -238,7 +252,7 @@
                 </label>
 
                 <label class="label-horizontal" id="train-no-label">
-                    <span>車次</span>
+                    <span class="label-full">車次</span><span class="label-short">車次</span>
                     <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-width:220px;">
                         <div class="cdd-wrap" id="cddWrap">
                             <button type="button" class="cdd-trigger" id="cdd-trigger" disabled>
@@ -252,7 +266,7 @@
                 </label>
 
                 <label class="label-horizontal">
-                    <span>乘客姓名</span>
+                    <span class="label-full">乘客姓名</span><span class="label-short">姓名</span>
                     <select name="name" id="passenger-select">
                         <option value="">載入中...</option>
                     </select>
@@ -267,13 +281,13 @@
             </div>
         </form>
 
-        <h3>訂票任務狀態 (最新顯示在最上方)</h3>
+        <h3>訂票任務狀態</h3>
         
         <div class="table-container">
             <table id="task-table">
                 <thead>
                     <tr>
-                        <th>ID</th>
+                        <th class="col-id">ID</th>
                         <th>姓名</th>
                         <th>訂票資訊</th>
                         <th>狀態</th>
@@ -579,39 +593,38 @@
 
                 // --- 狀態中文標籤 ---
                 let statusLabel = status;
-                if      (status === 'running')    statusLabel = '訂票中';
-                else if (status === 'pending')    statusLabel = '等待中';
-                else if (status === 'cancelling') statusLabel = '取消中';
-                else if (status === 'success')    statusLabel = '成功OK';
-                else if (status === 'failed')     statusLabel = '失敗NG';
-                else if (status === 'cancelled')  statusLabel = '取消XX';
-                else if (status === 'booking_success')    statusLabel = '成功';
-                else if (status === 'booking_failed')     statusLabel = '失敗';
-                else if (status === 'task_aborted')       statusLabel = '中止';
-                else if (status === 'task_cancelled')     statusLabel = '取消';
-                else if (status === 'task_deleted')       statusLabel = '任務刪除';
-                else if (status === 'unknown_result')     statusLabel = '不明原因中止'
+                if      (status === 'running')          statusLabel = '訂票中';
+                else if (status === 'pending')          statusLabel = '等待中';
+                else if (status === 'cancelling')       statusLabel = '取消中';
+                else if (status === 'booking_success')  statusLabel = '成功';
+                else if (status === 'booking_failed')   statusLabel = '失敗';
+                else if (status === 'task_aborted')     statusLabel = '終止';
+                else if (status === 'task_cancelled')   statusLabel = '取消';
+                else if (status === 'task_deleted')     statusLabel = '任務刪除';
+                else if (status === 'unknown_result')   statusLabel = '不明原因終止'
 
                 // --- 解析 train_info 欄位 ---
-                // 格式: 從 [起站] 到 [訖站] (YYYY-MM-DD HH:MM)
+                // 格式: 從 [起站] 到 [訖站] (YYYY/MM/DD HH:MM TTTT)
                 let bookingInfo = task.train_info || '-';
                 const match = task.train_info
-                    ? task.train_info.match(/從\s*([^到]+)\s*到\s*([^ (]+)\s*\(([^ )]+)\s*([^)]*)\)/)
+                    ? task.train_info.match(/從\s*([^到]+)\s*到\s*([^ (]+)\s*\(([^ )]+)\s*([0-9:]+)\s*([^)]*)\)/)
                     : null;
 
                 if (match) {
                     const start_station = match[1].trim();
                     const end_station   = match[2].trim();
                     const train_time    = match[4].trim();
+                    const train_no      = match[5].trim();
 
-                    // 日期格式轉換: YYYY-MM-DD → MM/DD
+                    // 日期格式轉換: YYYY-MM-DD 或 YYYY/MM/DD → MM/DD
                     let travel_date = match[3].trim();
-                    if (travel_date !== 'N/A' && travel_date.includes('-')) {
-                        const parts = travel_date.split('-');
+                    if (travel_date !== 'N/A') {
+                        const parts = travel_date.includes('-') ? travel_date.split('-') : travel_date.split('/');
                         if (parts.length === 3) travel_date = `${parts[1]}/${parts[2]}`;
                     }
 
-                    bookingInfo = `${start_station} → ${end_station} (${travel_date} ${train_time})`;
+                    const train_no_str = train_no ? ` - ${train_no}` : '';
+                    bookingInfo = `${start_station} → ${end_station} (${travel_date} ${train_time}${train_no_str})`;
                 }
 
                 // --- 提交/更新時間：只顯示時間部分 (HH:MM:SS) ---
@@ -628,7 +641,7 @@
 
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td><code>${task.id}</code></td>
+                    <td class="col-id"><code>${task.id}</code></td>
                     <td>${task.passenger_name || '未指定'}</td>
                     <td>${bookingInfo}</td>
                     <td><span class="status-${status}">${statusLabel}</span></td>

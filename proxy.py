@@ -300,26 +300,13 @@ def parse_booking_form_element_id(session: Session, page: str):
         logger.error(f"Unable to find element id {target_id}")
         return None
 
-    print(GREEN)
-
-    print(f"captcha_image_url  = {booking_form['captcha_image_url']}")
-    print(f"captcha_reload_url = {booking_form['captcha_reload_url']}")
-    print(f"booking_submit_url = {booking_form['booking_submit_url']}")
-
-    print(RESET)
+    logger.debug(GREEN + f"captcha_image_url  = {booking_form['captcha_image_url']}" + RESET)
+    logger.debug(GREEN + f"captcha_reload_url = {booking_form['captcha_reload_url']}" + RESET)
+    logger.debug(GREEN + f"booking_submit_url = {booking_form['booking_submit_url']}" + RESET)
 
     # booking_form['captcha_image_url']  = inject_jsessionid_to_url(session, booking_form['captcha_image_url'])
     # booking_form['captcha_reload_url'] = inject_jsessionid_to_url(session, booking_form['captcha_reload_url'])
     # booking_form['booking_submit_url'] = inject_jsessionid_to_url(session, booking_form['booking_submit_url'])
-
-    # print(CYAN)
-
-    # print(f"captcha_image_url  = {booking_form['captcha_image_url']}")
-    # print(f"captcha_reload_url = {booking_form['captcha_reload_url']}")
-    # print(f"booking_submit_url = {booking_form['booking_submit_url']}")
-
-    # print(RESET)
-
 
     return booking_form
 
@@ -527,7 +514,7 @@ def check_and_print_errors(html_content: Union[str, bytes]) -> bool:
     
     if error_elements:
         booking_NG = booking_NG + 1
-        print(f"\n{RED}{BOLD}======= 提交錯誤訊息：======= {RESET}")
+        logger.info(f"{RED}{BOLD}======= 提交錯誤訊息：======= {RESET}")
         
         # 為了避免重複印出 (因為 <ul> 和 <span> 都帶有這個 class)，
         # 我們通常只提取最小範圍的元素（即 <span> 或 <li>）的內容。
@@ -546,17 +533,13 @@ def check_and_print_errors(html_content: Union[str, bytes]) -> bool:
                 unique_errors.add(error_text)
                 
         for error in sorted(list(unique_errors)):
-            print(f"{RED}{error}{RESET}")
+            logger.info(f"{RED}{error}{RESET}")
             
-        print(f"{RED}{BOLD}==================================={RESET}\n")
+        logger.info(f"{RED}{BOLD}==================================={RESET}\n")
         return True, unique_errors
     else:
         booking_OK = booking_OK + 1
-        print(YELLOW)
-        print('-' * 80)
-        print("✅ HTML 內容中未發現 'feedbackPanelERROR'，可能已成功進入下一步。")
-        print('-' * 80)
-        print(RESET)
+        logger.info(f"{YELLOW}✅ HTML 內容中未發現 'feedbackPanelERROR'，可能已成功進入下一步。{RESET}")
         return False, None
 
 # ----------------------------------------------------------------------------
@@ -869,7 +852,7 @@ def thsr_submit_booking_form(session: Session, page: str, url_path: str, passcod
 
 # 設定全域變數：時間比對的容許範圍（分鐘）
 # 允許範圍：-5 分鐘到 +5 分鐘
-TIME_TOLERANCE_MINUTES = 5
+TIME_TOLERANCE_MINUTES = 50
 
 def select_train_and_submit(page: str, search_by: str, target_list: list) -> str:
     """
@@ -1120,7 +1103,7 @@ def thsr_run_booking_flow(
         task_id:        任務唯一識別碼。
         task_data:      訂票所需資料 (start_station, end_station, travel_date, train_time,
                         name, personal_id, phone_num, email, identity ...)。
-        cancel_event:   threading.Event，由外部設定 (set()) 以中止任務。
+        cancel_event:   threading.Event，由外部設定 (set()) 以終止任務。
         status_updater: callable(task_id, status, message)，用於回報進度給呼叫者。
 
     Returns:
@@ -1137,7 +1120,7 @@ def thsr_run_booking_flow(
     status_updater(task_id, 'running', '開始初始化 Session...')
 
     t0 = time.perf_counter()
-    booking_success = False
+    final_status = 'booking_failed'
     result_message = ""
 
     try:
@@ -1227,24 +1210,26 @@ def thsr_run_booking_flow(
                 passcode = save_and_parse_captcha_image(session, captcha_passcode_url)
 
             if not passcode:
-                logger.warning(f"驗證碼取得或識別失敗 (attempt {captcha_attempt})，繼續重試...")
+                logger.warning(f"驗證碼識別失敗 (attempt {captcha_attempt})，繼續重試...")
                 is_error_found = True
                 errmsg_set = {CAPTCHA_ERROR_MSG}
                 continue
 
             logger.info(YELLOW + f"passcode = {passcode} (attempt {captcha_attempt})" + RESET)
-            status_updater(task_id, 'running', f'驗證碼識別成功 ({captcha_attempt}/{MAX_CAPTCHA_RETRY})。提交訂票表單中...')
+            status_updater(task_id, 'running', f'訂票及驗證碼識別中... ({captcha_attempt}/{MAX_CAPTCHA_RETRY})')
 
             # 步驟 5: 提交訂票表單 (第一頁)
             if cancel_event.is_set():
                 raise Exception("取消運行中任務5")
 
-            sleep_range(2, 3)
+            # sleep_range(2, 3)
+            logger.info(f"({captcha_attempt}/{MAX_CAPTCHA_RETRY}) Submitting booking form ... & verifing passcode = {passcode}")
             page = thsr_submit_booking_form(session, page, booking_form_submit_url, passcode, task_data)
 
             is_error_found, errmsg_set = check_and_print_errors(page)
 
             if not is_error_found:
+                logger.info(f"表單提交成功 (attempt {captcha_attempt})，無錯誤訊息，繼續後續流程...")
                 # 表單提交成功，跳出重試迴圈
                 break
 
@@ -1261,7 +1246,8 @@ def thsr_run_booking_flow(
         if is_error_found:
             result_message = "".join(errmsg_set) if errmsg_set else "訂票表單提交失敗。"
             booking_NG += 1
-            return "booking_failed", result_message
+            logger.error(f"訂票失敗: {result_message}")
+            return final_status, result_message
 
         status_updater(task_id, 'running', '表單提交成功。選擇車次中...')
 
@@ -1304,7 +1290,7 @@ def thsr_run_booking_flow(
             if not isinstance(submission_info, dict):
                 result_message = f"選車失敗：{submission_info}"
                 booking_NG += 1
-                return False, result_message
+                return final_status, result_message
 
             submission_url  = submission_info['url']
             submission_data = submission_info['data']
@@ -1420,7 +1406,7 @@ def thsr_run_booking_flow(
             for k in ('SubmitButton', 'goBackM', 'goBackTGO', 'SubmitPassButton'):
                 _data.pop(k, None)
 
-            logger.info(CYAN + "S3 form_data: %s" % _data + RESET)
+            logger.debug(CYAN + "S3 form_data: %s" % _data + RESET)
             return _full_url, _data
 
         # --- 第一次 POST ---
@@ -1444,7 +1430,7 @@ def thsr_run_booking_flow(
         if _err_found:
             result_message = "".join(_errmsg) if _errmsg else "乘客資料提交失敗。"
             booking_NG += 1
-            return "booking_failed", result_message
+            return final_status, result_message
 
         # 判斷是否為早鳥確認頁（需第二次 POST）
         # 條件: 頁面上仍有 BookingS3FormSP（尚未完成）
@@ -1495,7 +1481,7 @@ def thsr_run_booking_flow(
 
         if booking_code:
             result_message = f"訂位代號: {booking_code}"
-            booking_success = True
+            final_status = 'booking_success'
             booking_OK += 1
             status_updater(task_id, 'running', f'訂位成功！{result_message}')
         else:
@@ -1506,30 +1492,31 @@ def thsr_run_booking_flow(
                 with open(os.path.join(OUTPUT_DIR, "booking_failed_page.html"), "w", encoding="utf-8") as _f:
                     _f.write(resp_final.text)
                 logger.info("Failed page saved to booking_failed_page.html for debugging.")
-            return "booking_failed", result_message
 
-        return "booking_success", result_message
+        return final_status, result_message
 
     except Exception as e:
         print(f"{RED}Exception occurred - {task_id}: {e}{RESET}")
-    
-        if "取消" in str(e) or "中斷" in str(e) or "放棄" in str(e):
+
+        if any(keyword in str(e) for keyword in ["取消", "放棄", "中斷", "終止"]):
             result_message = str(e)
             status_updater(task_id, 'task_aborted', result_message)
-            return 'task_aborted', result_message
+            final_status = 'task_aborted'
+            return final_status, result_message
 
         booking_NG += 1
         result_message = f"訂票流程中斷: {e}"
         logger.error(f"Task {task_id} execution failed: {e}")
         status_updater(task_id, 'unknown_result', result_message)
-        return 'unknown_result', result_message
+        final_status = 'unknown_result'
+        return final_status, result_message
 
     finally:
         t1 = time.perf_counter() - t0
         logger.info(
             f"{YELLOW}Task {task_id} finished. "
             f"Total run time = {t1:.2f}s. "
-            f"booking_success: {booking_success}{RESET}"
+            f"final_status: {final_status}{RESET}"
         )
         print('-' * 80)
 

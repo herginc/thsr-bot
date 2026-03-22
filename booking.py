@@ -72,7 +72,7 @@ logging.basicConfig(level=logging.INFO, format=FORMAT)
 #     'booking_success' (成功)
 #     'booking_failed'  (失敗)
 #     'task_cancelled'  (取消) 
-#     'task_aborted'    (放棄) 
+#     'task_aborted'    (終止) 
 #     'unknown_result'  (不明原因)
 # ----------------------------------------------------------------------------
 
@@ -93,7 +93,7 @@ def thsr_run_booking_flow_with_data(
     status_updater(task_id, 'running', '開始初始化 Session...')
     
     t0 = time.perf_counter()
-    booking_success = False
+    final_status = 'booking_failed' # 預設為失敗，除非流程中被設定為成功或取消
     result_message = ""
     
     # --- 模擬總時間設定 ---
@@ -137,7 +137,7 @@ def thsr_run_booking_flow_with_data(
                 result_message = "等待系統回應訂位代號..."
             elif step == total_steps:
                 if random.random() > 0.3: # 模擬 70% 成功率
-                    booking_success = True
+                    final_status = 'booking_success'
                     code = ''.join(random.choices('ABCDEFGHJKLMNPQRSTUVWXYZ123456789', k=6)) 
                     result_message = f"訂位代號: {code}"  # 訂票成功
                 else:
@@ -148,32 +148,35 @@ def thsr_run_booking_flow_with_data(
             # [scott@2026-03-12] update status
             status_updater(task_id, 'running', f"步驟 {step}/{total_steps}: (延遲 {step_delay:.2f}s) {result_message}")
             
-            if booking_success:
+            if final_status == 'booking_success':
                 break
-        
-        # 3. 處理結果
-        if booking_success:
-            booking_OK += 1
-            return 'booking_success', result_message
-        else:
-            booking_NG += 1
-            return 'booking_failed', result_message
+
+
+        return final_status, result_message
 
 
     except Exception as e:
-        if "取消" in str(e) or "中斷" in str(e) or "放棄" in str(e):
+        if any(keyword in str(e) for keyword in ["取消", "放棄", "中斷", "終止"]):
             result_message = str(e)
-            return 'task_aborted', result_message
+            logger.info(f"Task {task_id} execution cancelled: {e}")
+            final_status = 'task_aborted'
+            return final_status, result_message
 
-        booking_NG += 1
         result_message = f"訂票流程中斷: {e}"
         logger.error(f"Task {task_id} execution failed: {e}")
-        return 'unknown_result', result_message
+        final_status = 'unknown_result'
+        return final_status, result_message
     
     finally:
+        # 3. 處理結果
+        if final_status == 'booking_success':
+            booking_OK += 1
+        else:
+            booking_NG += 1
+
         t1 = time.perf_counter() - t0
         # 輸出處理時間 (單位: 秒)
-        logger.info(f"{YELLOW}Task {task_id} finished. Total run time = {t1:.2f}s. booking_success: {booking_success}{RESET}")
+        logger.info(f"{YELLOW}Task {task_id} finished. Total run time = {t1:.2f}s. final_status: {final_status}{RESET}")
 
 
 # ----------------------------------------------------------------------------
