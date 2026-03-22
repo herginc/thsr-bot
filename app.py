@@ -65,10 +65,22 @@ BASE_DIR = os.path.dirname(__file__)
 JSON_DIR = os.path.join(BASE_DIR, "json")
 os.makedirs(JSON_DIR, exist_ok=True)
 
-PASSENGER_FILE = os.path.join(JSON_DIR, "passenger.json")
-TASKS_FILE     = os.path.join(JSON_DIR, "tasks.json")
-HISTORY_FILE   = os.path.join(JSON_DIR, "history.json")
-ADMIN_FILE     = os.path.join(JSON_DIR, "admin.json")
+PASSENGER_FILE  = os.path.join(JSON_DIR, "passenger.json")
+TASKS_FILE      = os.path.join(JSON_DIR, "tasks.json")
+HISTORY_FILE    = os.path.join(JSON_DIR, "history.json")
+ADMIN_FILE      = os.path.join(JSON_DIR, "admin.json")
+TDX_CACHE_FILE  = os.path.join(JSON_DIR, "tdx_cache.json")
+
+# TDX 班次快取有效天數：當天查詢的資料，在乘車日期過後即視為過期
+# 快取結構 (tdx_cache.json):
+# {
+#   "YYYY-MM-DD|origin|destination": {
+#     "trains":      [...],          # get_thsr_timetable_od_by_name 原始回傳
+#     "travel_date": "YYYY-MM-DD",   # 乘車日期，用於判斷是否過期
+#     "cached_at":   "YYYY/MM/DD HH:MM:SS"
+#   },
+#   ...
+# }
 
 # 使用 timedelta 支援 Python 3.8
 CST_TIMEZONE = timezone(timedelta(hours=8))
@@ -129,6 +141,46 @@ for task in booking_tasks:
         task['update_time'] = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
 
 # current_cancel_event: Optional[threading.Event] = None
+
+# ----------------------------------------------------------------------------
+# 系統啟動時清除已過期的 TDX 班次快取
+# 過期條件：乘車日期 (travel_date) 已早於今天（含今天無需清除，今天的班次仍有效）
+# 仿 tasks.json 的啟動清理邏輯
+# ----------------------------------------------------------------------------
+def _purge_expired_tdx_cache_on_startup():
+    """系統啟動時呼叫一次，清除 tdx_cache.json 中乘車日期已過期的快取。"""
+    if not os.path.exists(TDX_CACHE_FILE):
+        return
+
+    try:
+        with open(TDX_CACHE_FILE, 'r', encoding='utf-8') as f:
+            cache: dict = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        cache = {}
+
+    today = datetime.now(CST_TIMEZONE).date()
+    expired_keys = []
+
+    for key, entry in cache.items():
+        try:
+            travel_date_str = entry.get('travel_date', '')
+            travel_date = datetime.strptime(travel_date_str, '%Y-%m-%d').date()
+            if travel_date < today:   # 乘車日期已過 → 過期
+                expired_keys.append(key)
+        except Exception:
+            expired_keys.append(key)   # 格式異常也視為過期
+
+    if expired_keys:
+        for k in expired_keys:
+            del cache[k]
+        with open(TDX_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(cache, f, indent=4, ensure_ascii=False)
+        print(f"[TDX Cache] 系統啟動：清除 {len(expired_keys)} 筆過期班次快取。")
+    else:
+        print(f"[TDX Cache] 系統啟動：快取共 {len(cache)} 筆，無過期資料。")
+
+_purge_expired_tdx_cache_on_startup()
+
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
@@ -504,6 +556,103 @@ def update_task_status(task_id: str, new_status: str, message: str):
 import requests
 import json
 
+# ----------------------------------------------------------------------------
+# TDX 班次快取輔助函式
+# ----------------------------------------------------------------------------
+
+def _tdx_cache_key(origin: str, destination: str, date: str) -> str:
+    """產生快取字典的 key，格式：'YYYY-MM-DD|origin|destination'"""
+    return f"{date}|{origin}|{destination}"
+
+
+def _load_tdx_cache() -> dict:
+    """讀取 tdx_cache.json，失敗時回傳空 dict。"""
+    if not os.path.exists(TDX_CACHE_FILE):
+        return {}
+    try:
+        with open(TDX_CACHE_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_tdx_cache(cache: dict):
+    """將整份快取寫回 tdx_cache.json。"""
+    with open(TDX_CACHE_FILE, 'w', encoding='utf-8') as f:
+        json.dump(cache, f, indent=4, ensure_ascii=False)
+
+
+def get_trains_with_cache(origin: str, destination: str, date: str,
+                          app_id: str, app_key: str) -> tuple:
+    """
+    先查 tdx_cache.json；快取命中直接回傳，未命中才呼叫外部 API 並存檔。
+    trains 與 discount_map 一併快取，避免每次重複打 THSR 官網。
+
+    Args:
+        origin:      出發站（中文），例如 '台北'
+        destination: 到達站（中文），例如 '台中'
+        date:        乘車日期 'YYYY-MM-DD'
+        app_id / app_key: TDX 憑證
+
+    Returns:
+        (trains: list, discount_map: dict)
+        - trains:       與 get_thsr_timetable_od_by_name 相同格式的班次清單
+        - discount_map: {train_no: bool}，True 表示該班次有大學生優惠
+    """
+    cache_key = _tdx_cache_key(origin, destination, date)
+
+    # ── 讀取快取（帶 lock，保護併發讀寫）──
+    with data_lock:
+        cache = _load_tdx_cache()
+        entry = cache.get(cache_key)
+
+    if entry and 'discount_map' in entry:
+        logger.info(BLUE + f"[TDX Cache] HIT  ({date} {origin}→{destination})，"
+                    f"快取時間: {entry.get('cached_at', '?')}" + RESET)
+        return entry['trains'], entry['discount_map']
+
+    # ── 快取未命中（或舊快取缺少 discount_map）→ 呼叫外部 API ──
+    logger.info(RED + f"[TDX Cache] MISS ({date} {origin}→{destination})，呼叫 TDX API…" + RESET)
+    trains = get_thsr_timetable_od_by_name(
+        app_id=app_id,
+        app_key=app_key,
+        origin_name=origin,
+        destination_name=destination,
+        train_date=date,
+    )
+
+    train_no_list = [t['train_no'] for t in trains]
+
+    # 查詢大學生優惠（失敗時回傳空 dict，不影響主流程）
+    discount_map = check_discounts_for_list(
+        StartStation=origin,
+        EndStation=destination,
+        target_date=date,
+        train_no_list=train_no_list,
+        discount_type='大學生',
+    )
+
+    # ── 將 trains + discount_map 一併存入快取 ──
+    with data_lock:
+        cache = _load_tdx_cache()   # 重新讀取，避免覆蓋其他 key
+        cache[cache_key] = {
+            'trains':       trains,
+            'discount_map': discount_map,
+            'travel_date':  date,
+            'cached_at':    datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S'),
+        }
+        _save_tdx_cache(cache)
+        logger.info(f"[TDX Cache] SAVE ({date} {origin}→{destination})，"
+                    f"共 {len(trains)} 班，存入快取（含優惠資料）。")
+
+    return trains, discount_map
+
+
+# -----------------------------------------------------------------------------
+# 查詢某'日期/班次'高鐵是否有大學生優惠票
+# [注意]: 班次一定要四碼, "508" 不行, 一定要 "0508" 才可以
+# [注意]: 班次若為三碼，程式要自動補 '0'。
+# -----------------------------------------------------------------------------
 def check_discounts_for_list(StartStation, EndStation, target_date, train_no_list, discount_type):
     """
     批次檢查特定日期、多個車次是否有特定類別的優惠。
@@ -1358,27 +1507,17 @@ def api_get_trains():
         return jsonify({'status': 'error', 'message': '缺少必要參數 origin / destination / date'}), 400
 
     try:
-        trains = get_thsr_timetable_od_by_name(
+        trains, discount_map = get_trains_with_cache(
+            origin=origin,
+            destination=destination,
+            date=date,
             app_id=TDX_APP_ID,
             app_key=TDX_APP_KEY,
-            origin_name=origin,
-            destination_name=destination,
-            train_date=date,
         )
 
         train_no_list = [t['train_no'] for t in trains]
         logger.info(f'({date} {origin}-{destination}) 高鐵班次共有{len(train_no_list)}班: {train_no_list}')
 
-        # 查詢大學生優惠，失敗時回傳空 dict，不影響主流程
-        discount_map = check_discounts_for_list(
-            StartStation=origin,
-            EndStation=destination,
-            target_date=date,
-            train_no_list=train_no_list,
-            discount_type='大學生',
-        )
-        # logger.info(f'大學生優惠票查詢結果 {discount_map}')
-    
         # 有優惠的班次在 label 末尾加 ' *'
         for t in trains:
             has_discount = discount_map.get(t['train_no'], False)
