@@ -11,6 +11,7 @@ import os
 import re
 import json
 import time
+import hashlib
 import logging
 import threading
 from datetime import datetime, timezone, timedelta
@@ -18,7 +19,7 @@ from typing import Dict, Any, List, Optional
 from argparse import ArgumentParser
 
 from werkzeug.middleware.proxy_fix import ProxyFix
-from flask import Flask, request, abort, render_template, jsonify, redirect
+from flask import Flask, request, abort, render_template, jsonify, redirect, session
 
 import booking
 import proxy
@@ -30,8 +31,8 @@ from tdx_api import get_thsr_timetable_od_by_name
 # True  → 使用 booking.thsr_run_booking_flow_with_data (模擬版本，用於開發/測試)
 # False → 使用 proxy.thsr_run_booking_flow             (真實版本，連接高鐵官網)
 # ----------------------------------------------------------------------------
-USE_MOCK_BOOKING = True
-# USE_MOCK_BOOKING = False
+# USE_MOCK_BOOKING = True
+USE_MOCK_BOOKING = False
 
 
 # ----------------------------------------------------------------------------
@@ -67,6 +68,7 @@ os.makedirs(JSON_DIR, exist_ok=True)
 PASSENGER_FILE = os.path.join(JSON_DIR, "passenger.json")
 TASKS_FILE     = os.path.join(JSON_DIR, "tasks.json")
 HISTORY_FILE   = os.path.join(JSON_DIR, "history.json")
+ADMIN_FILE     = os.path.join(JSON_DIR, "admin.json")
 
 # 使用 timedelta 支援 Python 3.8
 CST_TIMEZONE = timezone(timedelta(hours=8))
@@ -130,6 +132,7 @@ for task in booking_tasks:
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
 
 
 # ----------------------------------------------------------------------------
@@ -145,21 +148,65 @@ def start_booking_worker_thread():
         booking_thread.start()
 
 # ----------------------------------------------------------------------------
+# Sensitive data 遮罩
+#
+# 有管理者權限（session["is_admin"] == True）的 client：
+#   - id          → 顯示真實值
+#   - personal_id → 保留前4碼+最後1碼，中間 "*"（例：G120*****2）
+#   - phone_num   → 顯示真實值
+#   - email       → 顯示真實值
+#
+# 無管理者權限的 client：
+#   - id / personal_id / phone_num / email → 全部以等長 "*" 取代
+# ----------------------------------------------------------------------------
+
+def _mask_all(value: str) -> str:
+    return "*" * len(value) if value else ""
+
+def _mask_personal_id(pid: str) -> str:
+    if not pid:
+        return ""
+    if len(pid) <= 5:
+        return "*" * len(pid)
+    return pid[:4] + "*" * (len(pid) - 5) + pid[-1]
+
+def apply_passenger_mask(passengers: list, is_admin: bool) -> list:
+    """
+    id 為非 sensitive，所有 session 皆顯示真實值。
+    Sensitive 欄位（personal_id / phone_num / email）：
+      - is_admin=True  → personal_id 部分遮罩，其餘顯示真實值
+      - is_admin=False → 全部以等長 '*' 取代
+    """
+    result = []
+    for p in passengers:
+        base = {
+            **p,
+            "display_id": p.get("id", ""),   # id 非 sensitive，永遠顯示真實值
+        }
+        if is_admin:
+            base.update({
+                "display_personal_id": _mask_personal_id(p.get("personal_id", "")),
+                "display_phone_num":   p.get("phone_num", ""),
+                "display_email":       p.get("email", ""),
+            })
+        else:
+            base.update({
+                "display_personal_id": _mask_all(p.get("personal_id", "")),
+                "display_phone_num":   _mask_all(p.get("phone_num", "")),
+                "display_email":       _mask_all(p.get("email", "")),
+            })
+        result.append(base)
+    return result
+
+# ----------------------------------------------------------------------------
 # ID 生成器：取得當前毫秒級時間戳後面8碼
 # 例如：1731159842567.89 -> 1731159842568 -> 59842568
 # ----------------------------------------------------------------------------
 def get_new_passenger_id():
-
-    # 1. 取得毫秒級時間戳並轉換為整數
     full_timestamp = int(time.time() * 1000)
-    
-    # 2. 只取後面 8 碼 (對 100,000,000 取模)
-    # 例如：1731159842568 % 100000000 = 59842568 (共 8 位)
     short_id = full_timestamp % 100000000
-    
-    # 3. 轉換為字串並用 '0' 補齊至 8 碼，確保長度一致
-    # 例如：如果 ID 是 9842568，則會補齊為 09842568
     return str(short_id).zfill(8)
+
 
 # ----------------------------------------------------------------------------
 # 從TASKS_FILE載入任務, 格式化訂票資訊以符合訂票任務狀態表格格式, 並整理過期的任務.
@@ -959,7 +1006,10 @@ def index_page():
     
     # 3. 如果有乘客資料，則正常渲染首頁
     # 這裡傳遞 passengers 變數到模板，以確保模板中的任何依賴能正常運作
-    return render_template("index.html", passengers=passengers)
+    return render_template("index.html",
+                           passengers=passengers,
+                           is_admin=session.get('is_admin', False),
+                           password_set=admin_password_is_set())
 
 
 # app.py: 修正 passenger_page 函式，強制姓名唯一性
@@ -968,7 +1018,16 @@ def index_page():
 def passenger_page():
     # 讀取現有乘客列表，無論是 GET 或 POST 請求，都會在鎖定區間外先讀取
     # 這裡先讀取，如果 POST 失敗，可以直接返回這個列表
-    passengers = load_json(PASSENGER_FILE) 
+    passengers = load_json(PASSENGER_FILE)
+
+    # 共用：根據 session 套用遮罩，傳入模板
+    def _render(plist, **kwargs):
+        is_admin = session.get('is_admin', False)
+        masked = apply_passenger_mask(plist, is_admin)
+        return render_template("passenger.html",
+                               passengers=masked,
+                               is_admin=is_admin,
+                               **kwargs)
 
     if request.method == "POST":
         data = request.form
@@ -976,7 +1035,7 @@ def passenger_page():
         
         # 1. 檢查 'name' 是否為空
         if not name or name.strip() == "":
-            return render_template("passenger.html", passengers=passengers, error="姓名不能為空。")
+            return _render(passengers, error="姓名不能為空。")
             
         # 2. 檢查 'name' 是否重複 (必須在寫入前完成)
         # 使用 data_lock 確保在讀取和寫入乘客檔案時的執行緒安全
@@ -989,8 +1048,7 @@ def passenger_page():
             existing_names = [p.get("name") for p in passengers if p.get("name") is not None]
             
             if name in existing_names:
-                # 返回錯誤訊息，將現有乘客列表傳回
-                return render_template("passenger.html", passengers=passengers, error=f"錯誤：乘客姓名 '{name}' 已經存在，請使用獨特的名稱。")
+                return _render(passengers, error=f"錯誤：乘客姓名 '{name}' 已經存在，請使用獨特的名稱。")
                 
             # 3. 執行新增操作
             passenger = {
@@ -1005,15 +1063,252 @@ def passenger_page():
             save_json(PASSENGER_FILE, passengers)
         
             # 4. 新增成功，返回成功訊息
-            return render_template("passenger.html", passengers=passengers, success=True)
+            return _render(passengers, success=True)
     
     # GET 請求：顯示乘客列表
-    # passengers = load_json(PASSENGER_FILE) # 已經在函式開始處讀取
-    return render_template("passenger.html", passengers=passengers)
+    return _render(passengers)
 
 # ----------------------------------------------------------------------
 # 注意：若您的 passenger.html 中沒有處理 error 參數，需要微幅修改 passenger.html
 # ----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# 管理者密碼相關 helper
+# ----------------------------------------------------------------------------
+def _hash_password(password: str) -> str:
+    """以 SHA-256 雜湊密碼後回傳 hex string。"""
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+def admin_password_is_set() -> bool:
+    """檢查 admin.json 是否已存有密碼雜湊。"""
+    cfg = load_json(ADMIN_FILE)
+    return isinstance(cfg, dict) and bool(cfg.get('password_hash'))
+
+def verify_admin_password(password: str) -> bool:
+    """驗證輸入密碼是否與已儲存的雜湊相符。"""
+    cfg = load_json(ADMIN_FILE)
+    if not isinstance(cfg, dict):
+        return False
+    return cfg.get('password_hash') == _hash_password(password)
+
+# ----------------------------------------------------------------------------
+# API：設定管理者密碼（僅在尚未設定時允許）
+# POST /api/admin/set-password  body: { "password": "..." }
+# ----------------------------------------------------------------------------
+@app.route("/api/admin/set-password", methods=["POST"])
+def api_admin_set_password():
+    if admin_password_is_set():
+        return jsonify({"status": "error", "message": "管理者密碼已設定，無法重新設定。"}), 403
+
+    body = request.get_json(silent=True) or {}
+    password = (body.get("password") or "").strip()
+    if len(password) < 4:
+        return jsonify({"status": "error", "message": "密碼長度至少需要 4 個字元。"}), 400
+
+    with data_lock:
+        save_json(ADMIN_FILE, {"password_hash": _hash_password(password)})
+
+    logger.info("管理者密碼已完成初始設定。")
+    return jsonify({"status": "success", "message": "管理者密碼設定成功。"}), 200
+
+# ----------------------------------------------------------------------------
+# API：取得管理者權限（登入）
+# POST /api/admin/login  body: { "password": "..." }
+# ----------------------------------------------------------------------------
+@app.route("/api/admin/login", methods=["POST"])
+def api_admin_login():
+    if not admin_password_is_set():
+        return jsonify({"status": "error", "message": "管理者密碼尚未設定。"}), 400
+
+    body = request.get_json(silent=True) or {}
+    password = (body.get("password") or "").strip()
+
+    if verify_admin_password(password):
+        session['is_admin'] = True
+        logger.info("管理者登入成功。")
+        return jsonify({"status": "success", "message": "已取得管理者權限。"}), 200
+    else:
+        session.pop('is_admin', None)
+        return jsonify({"status": "error", "message": "密碼錯誤。"}), 401
+
+# ----------------------------------------------------------------------------
+# API：放棄管理者權限（登出）
+# POST /api/admin/logout
+# ----------------------------------------------------------------------------
+@app.route("/api/admin/logout", methods=["POST"])
+def api_admin_logout():
+    session.pop('is_admin', None)
+    return jsonify({"status": "success", "message": "已登出管理者權限。"}), 200
+
+# ----------------------------------------------------------------------------
+# API：查詢目前管理者狀態
+# GET /api/admin/status
+# ----------------------------------------------------------------------------
+@app.route("/api/admin/status", methods=["GET"])
+def api_admin_status():
+    return jsonify({
+        "password_set": admin_password_is_set(),
+        "is_admin":     session.get('is_admin', False),
+    }), 200
+
+# ----------------------------------------------------------------------------
+# 乘客列表 API（供前端取得管理者權限後重新整理 sensitive data 用）
+# GET /api/passenger/list
+# ----------------------------------------------------------------------------
+@app.route("/api/passenger/list", methods=["GET"])
+def api_passenger_list():
+    """
+    根據目前 session 的管理者權限，回傳遮罩後的乘客列表。
+    前端在登入/登出管理者後呼叫此 API 更新頁面資料，
+    確保 sensitive data 顯示狀態與 session 一致。
+    """
+    is_admin = session.get('is_admin', False)
+    with data_lock:
+        passengers = load_json(PASSENGER_FILE)
+    masked = apply_passenger_mask(passengers, is_admin)
+    # 只回傳前端顯示所需欄位，原始 sensitive 欄位不輸出
+    output = [
+        {
+            "id":                   p.get("id", ""),
+            "name":                 p.get("name", ""),
+            "identity":             p.get("identity", ""),
+            "display_id":           p.get("display_id", ""),
+            "display_personal_id":  p.get("display_personal_id", ""),
+            "display_phone_num":    p.get("display_phone_num", ""),
+            "display_email":        p.get("display_email", ""),
+        }
+        for p in masked
+    ]
+    return jsonify({"status": "success", "is_admin": is_admin, "passengers": output}), 200
+
+# ----------------------------------------------------------------------------
+# 刪除乘客 API
+# ----------------------------------------------------------------------------
+@app.route("/api/passenger/delete/<passenger_id>", methods=["DELETE"])
+def delete_passenger(passenger_id):
+    """
+    刪除指定 ID 的乘客資料。
+    Returns JSON: {"status": "success"|"error", "message": "..."}
+    """
+    with data_lock:
+        passengers = load_json(PASSENGER_FILE)
+        original_count = len(passengers)
+        passengers = [p for p in passengers if str(p.get("id")) != str(passenger_id)]
+
+        if len(passengers) == original_count:
+            return jsonify({"status": "error", "message": f"找不到 ID 為 '{passenger_id}' 的乘客。"}), 404
+
+        save_json(PASSENGER_FILE, passengers)
+
+    logger.info(f"乘客 ID={passenger_id} 已刪除。")
+    return jsonify({"status": "success", "message": f"乘客 {passenger_id} 已成功刪除。"}), 200
+
+
+# ----------------------------------------------------------------------------
+# 匯出乘客資料 API (Export as JSON)
+# ----------------------------------------------------------------------------
+@app.route("/api/passenger/export", methods=["GET"])
+def export_passengers():
+    """
+    匯出所有乘客資料為 JSON 檔案下載。（需管理者權限）
+    """
+    if not session.get('is_admin'):
+        return jsonify({"status": "error", "message": "需要管理者權限。"}), 403
+
+    from flask import Response
+    passengers = load_json(PASSENGER_FILE)
+    json_str = json.dumps(passengers, indent=4, ensure_ascii=False)
+    filename = f"passengers_{datetime.now(CST_TIMEZONE).strftime('%Y%m%d_%H%M%S')}.json"
+    return Response(
+        json_str,
+        mimetype="application/json",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+# ----------------------------------------------------------------------------
+# 匯入乘客資料 API (Import from JSON)
+# ----------------------------------------------------------------------------
+@app.route("/api/passenger/import", methods=["POST"])
+def import_passengers():
+    """
+    從上傳的 JSON 檔案匯入乘客資料。（需管理者權限）
+    - 若姓名已存在則跳過（不覆蓋）。
+    - Returns JSON: {"status": "success", "added": N, "skipped": N, "errors": [...]}
+    """
+    if not session.get('is_admin'):
+        return jsonify({"status": "error", "message": "需要管理者權限。"}), 403
+
+    if "file" not in request.files:
+        return jsonify({"status": "error", "message": "未提供檔案，請上傳 JSON 檔案。"}), 400
+
+    file = request.files["file"]
+    if not file.filename.endswith(".json"):
+        return jsonify({"status": "error", "message": "檔案格式錯誤，僅接受 .json 檔案。"}), 400
+
+    try:
+        content = file.read().decode("utf-8")
+        imported = json.loads(content)
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        return jsonify({"status": "error", "message": f"JSON 解析失敗：{str(e)}"}), 400
+
+    if not isinstance(imported, list):
+        return jsonify({"status": "error", "message": "JSON 格式錯誤，需為乘客物件的陣列。"}), 400
+
+    REQUIRED_FIELDS = {"name", "personal_id", "phone_num", "email", "identity"}
+    added = 0
+    skipped = 0
+    errors = []
+
+    with data_lock:
+        passengers = load_json(PASSENGER_FILE)
+        existing_names = {p.get("name") for p in passengers if p.get("name")}
+
+        for i, p in enumerate(imported):
+            if not isinstance(p, dict):
+                errors.append(f"第 {i+1} 筆資料格式錯誤（非物件）。")
+                continue
+
+            missing = REQUIRED_FIELDS - set(p.keys())
+            if missing:
+                errors.append(f"第 {i+1} 筆資料缺少欄位：{', '.join(missing)}。")
+                continue
+
+            name = p.get("name", "").strip()
+            if not name:
+                errors.append(f"第 {i+1} 筆資料姓名為空，已跳過。")
+                skipped += 1
+                continue
+
+            if name in existing_names:
+                skipped += 1
+                continue
+
+            new_passenger = {
+                "id": get_new_passenger_id(),
+                "name": name,
+                "personal_id": p.get("personal_id"),
+                "phone_num": p.get("phone_num"),
+                "email": p.get("email"),
+                "identity": p.get("identity"),
+            }
+            passengers.append(new_passenger)
+            existing_names.add(name)
+            added += 1
+            # 避免同一毫秒產生重複 ID
+            time.sleep(0.002)
+
+        if added > 0:
+            save_json(PASSENGER_FILE, passengers)
+
+    logger.info(f"匯入乘客完成：新增 {added} 筆，跳過 {skipped} 筆，錯誤 {len(errors)} 筆。")
+    return jsonify({
+        "status": "success",
+        "added": added,
+        "skipped": skipped,
+        "errors": errors,
+        "message": f"匯入完成：新增 {added} 筆，跳過 {skipped} 筆。"
+    }), 200
 
 @app.route("/history.html")
 def history_page():

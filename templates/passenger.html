@@ -19,14 +19,79 @@
 
         /* 乘客列表：水平捲軸 */
         .table-container { width: 100%; overflow-x: auto; border: 1px solid #eee; border-radius: 5px; margin-bottom: 1.5rem; }
-        table { width: 100%; border-collapse: collapse; background: #fafbfc; font-size: 0.9rem; min-width: 520px; }
+        table { width: 100%; border-collapse: collapse; background: #fafbfc; font-size: 0.9rem; min-width: 580px; }
         th, td { border-bottom: 1px solid #e0e0e0; padding: 0.65rem 0.6rem; text-align: left; white-space: nowrap; }
         th { background: #e3f2fd; color: #1565c0; font-weight: bold; }
         tr:nth-child(even) td { background: #f9f9f9; }
 
+        /* 刪除按鈕 */
+        .btn-delete {
+            background: #e53935; color: #fff; border: none; border-radius: 4px;
+            padding: 0.3rem 0.75rem; font-size: 0.85rem; cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-delete:hover { background: #b71c1c; }
+
+        /* Import / Export 工具列 */
+        .io-toolbar { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+        .btn-export, .btn-import-label {
+            border: none; border-radius: 5px; padding: 0.5rem 1.1rem;
+            font-size: 0.95rem; cursor: pointer; font-weight: bold;
+            display: inline-block; transition: background 0.2s; text-decoration: none;
+        }
+        .btn-export       { background: #2e7d32; color: #fff; }
+        .btn-export:hover { background: #1b5e20; }
+        .btn-export.disabled, .btn-import-label.disabled {
+            display: none !important;
+        }
+        .btn-import-label       { background: #f57c00; color: #fff; }
+        .btn-import-label:hover { background: #e65100; }
+        #importFileInput { display: none; }
+        #importStatus { font-size: 0.9rem; color: #555; }
+
+        /* 管理者 badge */
+        .admin-badge {
+            background: #f9a825; color: #333; font-size: 0.78rem; font-weight: bold;
+            padding: 0.2rem 0.6rem; border-radius: 20px; white-space: nowrap;
+        }
+
+        /* Alert */
         .alert { padding: 0.75rem 1.25rem; margin-bottom: 1rem; border: 1px solid transparent; border-radius: 0.25rem; font-weight: bold; }
         .success-alert { color: #155724; background-color: #d4edda; border-color: #c3e6cb; }
-        .error-alert { color: #721c24; background-color: #f8d7da; border-color: #f5c6cb; }
+        .error-alert   { color: #721c24; background-color: #f8d7da; border-color: #f5c6cb; }
+        .info-alert    { color: #0c5460; background-color: #d1ecf1; border-color: #bee5eb; }
+
+        /* 遮罩欄位樣式 */
+        .masked-cell { color: #bdbdbd; letter-spacing: 0.05em; font-family: monospace; }
+
+        /* ── Modal 通用 ── */
+        .modal-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,0.55); z-index: 999;
+            justify-content: center; align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal-box {
+            background: #fff; border-radius: 10px; padding: 2rem 1.8rem;
+            width: 95%; max-width: 380px; box-shadow: 0 8px 32px rgba(0,0,0,0.22);
+        }
+        .modal-box h3 { margin: 0 0 0.3rem; color: #1565c0; font-size: 1.15rem; }
+        .modal-box p  { margin: 0 0 1.1rem; color: #555; font-size: 0.92rem; }
+        .modal-input {
+            width: 100%; padding: 0.6rem 0.8rem; border: 1px solid #bbb;
+            border-radius: 5px; font-size: 1rem; box-sizing: border-box; margin-bottom: 0.75rem;
+        }
+        .modal-input:focus { outline: 2px solid #1565c0; border-color: #1565c0; }
+        .modal-btn-row { display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 0.25rem; }
+        .modal-btn {
+            border: none; border-radius: 5px; padding: 0.55rem 1.3rem;
+            font-size: 1rem; cursor: pointer; font-weight: bold; transition: background 0.2s;
+        }
+        .modal-btn.primary       { background: #1565c0; color: #fff; }
+        .modal-btn.primary:hover { background: #003c8f; }
+        .modal-btn.cancel        { background: #eee; color: #333; }
+        .modal-btn.cancel:hover  { background: #ddd; }
+        .modal-error { color: #c62828; font-size: 0.88rem; margin-bottom: 0.5rem; min-height: 1.2em; }
 
         @media (max-width: 600px) {
             header { font-size: 1.2rem; padding: 0.9rem 0; }
@@ -39,69 +104,400 @@
     </style>
 </head>
 <body>
-    <header>乘客個人資料</header>
-    <div class="container">
-        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 2px solid #e3f2fd; padding-bottom: 0.5rem; margin-bottom: 1rem;">
-            <h2 class="page-title" style="margin:0; border:none; padding:0;">新增乘客資料</h2>
-            <a href="/" style="display:inline-block; margin:0; background:#1565c0; color:#fff; padding:0.5rem 1rem; border-radius:5px; font-size:0.95rem; text-decoration:none; font-weight:bold; white-space:nowrap;">回首頁</a>
-        </div>
-        {% if success %}
-        <div class="alert success-alert">✅ 乘客新增成功！</div>
-        {% endif %}
-        {% if error %}
-        <div class="alert error-alert">❌ {{ error }}</div>
-        {% endif %}
-        <form method="post">
-            <label>
-                姓名
-                <input name="name" required autocomplete="off">
-            </label>
-            <label>
-                身份證字號
-                <input name="personal_id" required autocomplete="off">
-            </label>
-            <label>
-                手機號碼
-                <input name="phone_num" required autocomplete="off">
-            </label>
-            <label>
-                郵件信箱
-                <input name="email" required autocomplete="off">
-            </label>
-            <label>
-                身份
-                <select name="identity" required>
-                    <option value="一般">一般</option>
-                    <option value="學生">學生</option>
-                    <option value="老人">老人</option>
-                    <option value="孩童">孩童</option>
-                </select>
-            </label>
-            <button type="submit">新增</button>
-        </form>
-        <h2>乘客資料列表</h2>
-        <div class="table-container">
-        <table>
-            <tr>
-                <th>ID</th>
-                <th>姓名</th>
-                <th>身份證字號</th>
-                <th>手機號碼</th>
-                <th>郵件信箱</th>
-                <th>身份</th>
-            </tr>
-            {% for p in passengers %}
-            <tr>
-                <td>{{ p.id }}</td>
-                <td>{{ p.name }}</td>
-                <td>{{ p.personal_id }}</td>
-                <td>{{ p.phone_num }}</td>
-                <td>{{ p.email }}</td>
-                <td>{{ p.identity }}</td>
-            </tr>
-            {% endfor %}
-        </table>
+
+<!-- ════════════════════════════════════════════
+     Modal 1：設定管理者密碼（首次使用，強制出現）
+════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modalSetPassword">
+    <div class="modal-box">
+        <h3>🔐 設定管理者密碼</h3>
+        <p>系統尚未設定管理者密碼，請立即設定。此密碼將用於保護匯入／匯出等管理功能。</p>
+        <input class="modal-input" type="password" id="setPasswordInput"
+               placeholder="請輸入新密碼（至少 4 個字元）" autocomplete="new-password">
+        <input class="modal-input" type="password" id="setPasswordConfirm"
+               placeholder="再次確認密碼" autocomplete="new-password">
+        <div class="modal-error" id="setPasswordError"></div>
+        <div class="modal-btn-row">
+            <button class="modal-btn primary" onclick="submitSetPassword()">確認設定</button>
         </div>
     </div>
+</div>
+
+<!-- ════════════════════════════════════════════
+     Modal 2：輸入管理者密碼（登入）
+════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modalLogin">
+    <div class="modal-box">
+        <h3>🔑 管理者驗證</h3>
+        <p>請輸入管理者密碼以使用匯入／匯出功能。</p>
+        <input class="modal-input" type="password" id="loginPasswordInput"
+               placeholder="管理者密碼" autocomplete="current-password">
+        <div class="modal-error" id="loginError"></div>
+        <div class="modal-btn-row">
+            <button class="modal-btn cancel" onclick="closeModal('modalLogin')">取消</button>
+            <button class="modal-btn primary" onclick="submitLogin()">確認</button>
+        </div>
+    </div>
+</div>
+
+<header>乘客個人資料</header>
+<div class="container">
+
+    <!-- 頁首列：標題 / 管理者狀態 / 回首頁 -->
+    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #e3f2fd; padding-bottom:0.5rem; margin-bottom:1rem; gap:0.5rem; flex-wrap:wrap;">
+        <h2 class="page-title" style="margin:0; border:none; padding:0;">新增乘客資料</h2>
+        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+            <span id="adminBadge" style="display:none;" class="admin-badge">👑 管理者</span>
+            <button id="btnAdminAction"
+                    style="border:none; border-radius:5px; padding:0.4rem 0.9rem; font-size:0.88rem; font-weight:bold; cursor:pointer; background:#1565c0; color:#fff; transition:background 0.2s;"
+                    onclick="onAdminActionClick()">取得管理者權限</button>
+            <a href="/" style="background:#546e7a; color:#fff; padding:0.5rem 1rem; border-radius:5px; font-size:0.95rem; text-decoration:none; font-weight:bold; white-space:nowrap;">回首頁</a>
+        </div>
+    </div>
+
+    {% if success %}
+    <div class="alert success-alert">✅ 乘客新增成功！</div>
+    {% endif %}
+    {% if error %}
+    <div class="alert error-alert">❌ {{ error }}</div>
+    {% endif %}
+
+    <div id="actionAlert" style="display:none;" class="alert"></div>
+
+    <form method="post">
+        <label>
+            姓名
+            <input name="name" required autocomplete="off">
+        </label>
+        <label>
+            身份證字號
+            <input name="personal_id" required autocomplete="off">
+        </label>
+        <label>
+            手機號碼
+            <input name="phone_num" required autocomplete="off">
+        </label>
+        <label>
+            郵件信箱
+            <input name="email" required autocomplete="off">
+        </label>
+        <label>
+            身份
+            <select name="identity" required>
+                <option value="一般">一般</option>
+                <option value="學生">學生</option>
+                <option value="老人">老人</option>
+                <option value="孩童">孩童</option>
+            </select>
+        </label>
+        <button type="submit">新增</button>
+    </form>
+
+    <!-- 乘客列表標題 + Import/Export 工具列 -->
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.75rem;">
+        <h2 style="margin:0;">乘客資料列表</h2>
+        <div class="io-toolbar">
+            <a id="btnExport" href="/api/passenger/export"
+               class="btn-export disabled"
+               title="需要管理者權限">⬇ 匯出 JSON</a>
+            <label id="btnImportLabel"
+                   class="btn-import-label disabled"
+                   title="需要管理者權限">
+                ⬆ 匯入 JSON
+                <input type="file" id="importFileInput" accept=".json" disabled>
+            </label>
+            <span id="importStatus"></span>
+        </div>
+    </div>
+
+    {% if is_admin %}
+    <div id="sensitiveNotice" class="alert success-alert" style="font-size:0.88rem; padding:0.5rem 1rem; margin-bottom:0.6rem;">
+        🔓 管理者模式：顯示完整資料（身份證、電話、Email）
+    </div>
+    {% else %}
+    <div id="sensitiveNotice" class="alert info-alert" style="font-size:0.88rem; padding:0.5rem 1rem; margin-bottom:0.6rem;">
+        🔒 敏感欄位（🔒）已遮罩，請取得管理者權限以查看完整資料。
+    </div>
+    {% endif %}
+    <div class="table-container">
+    <table id="passengerTable">
+        <thead>
+        <tr>
+            <th>ID</th>
+            <th>姓名</th>
+            <th>身份證字號 🔒</th>
+            <th>手機號碼 🔒</th>
+            <th>郵件信箱 🔒</th>
+            <th>身份</th>
+            <th>操作</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for p in passengers %}
+        <tr id="row-{{ p.id }}">
+            <td>{{ p.display_id }}</td>
+            <td>{{ p.name }}</td>
+            <td class="{% if not is_admin %}masked-cell{% endif %}">{{ p.display_personal_id }}</td>
+            <td class="{% if not is_admin %}masked-cell{% endif %}">{{ p.display_phone_num }}</td>
+            <td class="{% if not is_admin %}masked-cell{% endif %}">{{ p.display_email }}</td>
+            <td>{{ p.identity }}</td>
+            <td>
+                <button class="btn-delete" onclick="deletePassenger('{{ p.id }}', '{{ p.name }}')">刪除</button>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<script>
+// ── 頁面初始化：檢查密碼是否已設定、目前是否為管理者 ────────────
+document.addEventListener('DOMContentLoaded', () => {
+    fetch('/api/admin/status')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.password_set) {
+                // 密碼尚未設定 → 強制顯示設定 modal（不可關閉）
+                openModal('modalSetPassword');
+                setTimeout(() => document.getElementById('setPasswordInput').focus(), 150);
+            }
+            setAdminUI(data.is_admin);
+        })
+        .catch(() => {
+            // API 失敗時依伺服器端 Jinja 值決定（保守處理）
+            setAdminUI({{ 'true' if is_admin else 'false' }});
+        });
+});
+
+// ── 管理者 UI 狀態切換 + 重新整理乘客列表 ───────────────────────
+function setAdminUI(isAdmin, refreshTable = false) {
+    const badge       = document.getElementById('adminBadge');
+    const actionBtn   = document.getElementById('btnAdminAction');
+    const exportBtn   = document.getElementById('btnExport');
+    const importLabel = document.getElementById('btnImportLabel');
+    const importInput = document.getElementById('importFileInput');
+
+    if (isAdmin) {
+        badge.style.display = 'inline-block';
+        actionBtn.textContent = '放棄管理者權限';
+        actionBtn.style.background = '#757575';
+        exportBtn.classList.remove('disabled');
+        exportBtn.style.display = '';
+        exportBtn.title = '將所有乘客資料下載為 JSON 檔案';
+        importLabel.classList.remove('disabled');
+        importLabel.style.display = '';
+        importLabel.title = '從 JSON 檔案匯入乘客資料（重複姓名將跳過）';
+        importInput.disabled = false;
+    } else {
+        badge.style.display = 'none';
+        actionBtn.textContent = '取得管理者權限';
+        actionBtn.style.background = '#1565c0';
+        exportBtn.classList.add('disabled');
+        exportBtn.style.display = 'none';
+        exportBtn.title = '需要管理者權限';
+        importLabel.classList.add('disabled');
+        importLabel.style.display = 'none';
+        importLabel.title = '需要管理者權限';
+        importInput.disabled = true;
+    }
+
+    if (refreshTable) refreshPassengerTable(isAdmin);
+}
+
+// ── 向後端重新取得乘客列表，更新表格 sensitive data ───────────────
+function refreshPassengerTable(isAdmin) {
+    fetch('/api/passenger/list')
+        .then(r => r.json())
+        .then(data => {
+            if (data.status !== 'success') return;
+
+            data.passengers.forEach(p => {
+                // 用 row id 直接找列，完全不依賴 tbody
+                const row = document.getElementById('row-' + p.id);
+                if (!row) return;
+                const cells = row.querySelectorAll('td');
+                // td[0]=ID, td[1]=姓名, td[2]=身份證, td[3]=電話, td[4]=Email, td[5]=身份, td[6]=操作
+                if (cells.length < 5) return;
+                cells[0].textContent = p.display_id;
+                cells[2].textContent = p.display_personal_id;
+                cells[3].textContent = p.display_phone_num;
+                cells[4].textContent = p.display_email;
+
+                // 更新 masked-cell 樣式
+                [cells[2], cells[3], cells[4]].forEach(td => {
+                    if (isAdmin) td.classList.remove('masked-cell');
+                    else         td.classList.add('masked-cell');
+                });
+            });
+
+            // 更新狀態列文字
+            const notice = document.getElementById('sensitiveNotice');
+            if (notice) {
+                if (isAdmin) {
+                    notice.className = 'alert success-alert';
+                    notice.style.cssText = 'font-size:0.88rem; padding:0.5rem 1rem; margin-bottom:0.6rem;';
+                    notice.textContent = '🔓 管理者模式：顯示完整資料（身份證、電話、Email）';
+                } else {
+                    notice.className = 'alert info-alert';
+                    notice.style.cssText = 'font-size:0.88rem; padding:0.5rem 1rem; margin-bottom:0.6rem;';
+                    notice.textContent = '🔒 敏感欄位（🔒）已遮罩，請取得管理者權限以查看完整資料。';
+                }
+            }
+        })
+        .catch(() => {}); // silent fail，不影響其他操作
+}
+
+// ── 頁首按鈕：取得 / 放棄管理者權限 ─────────────────────────────
+function onAdminActionClick() {
+    const isAdmin = document.getElementById('adminBadge').style.display !== 'none';
+    if (isAdmin) {
+        fetch('/api/admin/logout', { method: 'POST' })
+            .then(r => r.json())
+            .then(() => {
+                setAdminUI(false, true);
+                showAlert('已放棄管理者權限。', 'info');
+            })
+            .catch(() => showAlert('❌ 網路錯誤，請稍後再試。', 'error'));
+    } else {
+        document.getElementById('loginPasswordInput').value = '';
+        document.getElementById('loginError').textContent = '';
+        openModal('modalLogin');
+        setTimeout(() => document.getElementById('loginPasswordInput').focus(), 150);
+    }
+}
+
+// ── Modal 開關 ────────────────────────────────────────────────────
+function openModal(id)  { document.getElementById(id).classList.add('active'); }
+function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+// ── Modal 1：設定管理者密碼 ───────────────────────────────────────
+function submitSetPassword() {
+    const pw    = document.getElementById('setPasswordInput').value;
+    const pw2   = document.getElementById('setPasswordConfirm').value;
+    const errEl = document.getElementById('setPasswordError');
+
+    if (pw.length < 4) { errEl.textContent = '密碼長度至少需要 4 個字元。'; return; }
+    if (pw !== pw2)    { errEl.textContent = '兩次輸入的密碼不一致，請重新確認。'; return; }
+    errEl.textContent = '';
+
+    fetch('/api/admin/set-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'success') {
+            closeModal('modalSetPassword');
+            showAlert('✅ 管理者密碼設定成功！', 'success');
+        } else {
+            errEl.textContent = data.message;
+        }
+    })
+    .catch(() => { errEl.textContent = '網路錯誤，請稍後再試。'; });
+}
+
+document.getElementById('setPasswordConfirm').addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitSetPassword();
+});
+document.getElementById('setPasswordInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('setPasswordConfirm').focus();
+});
+
+// ── Modal 2：管理者登入 ───────────────────────────────────────────
+function submitLogin() {
+    const pw    = document.getElementById('loginPasswordInput').value;
+    const errEl = document.getElementById('loginError');
+    errEl.textContent = '';
+
+    fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'success') {
+            closeModal('modalLogin');
+            setAdminUI(true, true);
+            showAlert('✅ 已取得管理者權限。', 'success');
+        } else {
+            errEl.textContent = data.message;
+            document.getElementById('loginPasswordInput').select();
+        }
+    })
+    .catch(() => { errEl.textContent = '網路錯誤，請稍後再試。'; });
+}
+
+document.getElementById('loginPasswordInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitLogin();
+});
+
+// ── 顯示操作訊息 ──────────────────────────────────────────────────
+function showAlert(message, type) {
+    const el = document.getElementById('actionAlert');
+    el.className = 'alert ' + (
+        type === 'success' ? 'success-alert' :
+        type === 'info'    ? 'info-alert'    : 'error-alert'
+    );
+    el.textContent = message;
+    el.style.display = 'block';
+    setTimeout(() => { el.style.display = 'none'; }, 5000);
+}
+
+// ── 刪除乘客 ──────────────────────────────────────────────────────
+function deletePassenger(id, name) {
+    if (!confirm(`確定要刪除乘客「${name}」嗎？此操作無法復原。`)) return;
+
+    fetch(`/api/passenger/delete/${id}`, { method: 'DELETE' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'success') {
+                const row = document.getElementById('row-' + id);
+                if (row) row.remove();
+                showAlert(`✅ 乘客「${name}」已成功刪除。`, 'success');
+            } else {
+                showAlert('❌ 刪除失敗：' + data.message, 'error');
+            }
+        })
+        .catch(() => showAlert('❌ 網路錯誤，請稍後再試。', 'error'));
+}
+
+// ── 匯入乘客 ──────────────────────────────────────────────────────
+document.getElementById('importFileInput').addEventListener('change', function () {
+    const file = this.files[0];
+    if (!file) return;
+
+    const statusEl = document.getElementById('importStatus');
+    statusEl.textContent = '匯入中…';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    fetch('/api/passenger/import', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            statusEl.textContent = '';
+            if (data.status === 'success') {
+                let msg = `✅ ${data.message}`;
+                if (data.errors && data.errors.length > 0) {
+                    msg += `（${data.errors.length} 筆錯誤，詳見主控台）`;
+                    console.warn('匯入錯誤明細：', data.errors);
+                }
+                showAlert(msg, data.added > 0 ? 'success' : 'info');
+                if (data.added > 0) setTimeout(() => location.reload(), 1200);
+            } else {
+                showAlert('❌ 匯入失敗：' + data.message, 'error');
+            }
+        })
+        .catch(() => {
+            statusEl.textContent = '';
+            showAlert('❌ 網路錯誤，請稍後再試。', 'error');
+        });
+
+    this.value = '';
+});
+</script>
 </body>
 </html>
