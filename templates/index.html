@@ -654,6 +654,21 @@
                     bookingInfo = `${start_station} → ${end_station} (${travel_date} ${train_time}${train_no_str})`;
                 }
 
+                // --- 訊息欄：[第N次重試] 橘色粗體 + 主訊息 + 上次失敗原因灰字 ---
+                const rawMessage     = task.message          || '等待中...';
+                const lastFailReason = task.last_fail_reason || '';
+                const isActive   = (status === 'running' || status === 'pending' || status === 'cancelling');
+                const isFinished = ['booking_success','booking_failed','task_cancelled','task_aborted','unknown_result'].includes(status);
+
+                let messageHtml = '';
+                if (retryCount > 0 && isActive) {
+                    messageHtml += `<span style="color:#e65100;font-weight:bold;">[第&nbsp;${retryCount}&nbsp;次重試]</span>&nbsp;`;
+                }
+                messageHtml += rawMessage;
+                if (lastFailReason && !isFinished) {
+                    messageHtml += `<br><small style="color:#9e9e9e;">&#x26A0;&nbsp;上次失敗：${lastFailReason}</small>`;
+                }
+
                 // --- 提交/更新時間：只顯示時間部分 (HH:MM:SS) ---
                 const submitTime = task.submit_time ? task.submit_time.split(' ')[1] : '—';
                 const updateTime = task.update_time ? task.update_time.split(' ')[1] : '—';
@@ -672,7 +687,7 @@
                     <td>${task.passenger_name || '未指定'}</td>
                     <td>${bookingInfo}</td>
                     <td><span class="status-${status}">${statusLabel}</span>${retryBadge}</td>
-                    <td>${task.message || '等待中...'}</td>
+                    <td>${messageHtml}</td>
                     <td><small>${submitTime}</small></td>
                     <td><small>${updateTime}</small></td>
                     <td>${actionBtn}</td>
