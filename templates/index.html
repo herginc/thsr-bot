@@ -277,6 +277,19 @@
                     <input type="number" name="ticket_count" value="1" min="1" max="10">
                 </label>
 
+                <label class="label-horizontal">
+                    <span class="label-full">重試策略</span><span class="label-short">重試</span>
+                    <select name="retry_mode" id="retry-mode-select">
+                        <option value="stop" selected>停止嘗試訂票</option>
+                        <option value="forever">持續嘗試訂票</option>
+                        <option value="30m">30分鐘內持續嘗試訂票</option>
+                        <option value="1h">1小時內持續嘗試訂票</option>
+                        <option value="2h">2小時內持續嘗試訂票</option>
+                        <option value="4h">4小時內持續嘗試訂票</option>
+                        <option value="8h">8小時內持續嘗試訂票</option>
+                    </select>
+                </label>
+
                 <button type="submit" class="submit-btn">提交任務</button>
             </div>
         </form>
@@ -290,7 +303,7 @@
                         <th class="col-id">ID</th>
                         <th>姓名</th>
                         <th>訂票資訊</th>
-                        <th>狀態</th>
+                        <th style="min-width:44px;">狀態</th>
                         <th>訊息</th>
                         <th>提交時間</th>
                         <th>更新時間</th>
@@ -592,16 +605,30 @@
                 }
 
                 // --- 狀態中文標籤 ---
+                const retryCount = task.retry_count || 0;
+                const retryMode  = task.retry_mode  || 'stop';
+
                 let statusLabel = status;
-                if      (status === 'running')          statusLabel = '訂票中';
-                else if (status === 'pending')          statusLabel = '等待中';
+                if      (status === 'running')          statusLabel = retryCount > 0 ? '重試中' : '訂票中';
+                else if (status === 'pending')          statusLabel = retryCount > 0 ? '等待重試' : '等待中';
                 else if (status === 'cancelling')       statusLabel = '取消中';
                 else if (status === 'booking_success')  statusLabel = '成功';
                 else if (status === 'booking_failed')   statusLabel = '失敗';
                 else if (status === 'task_aborted')     statusLabel = '終止';
                 else if (status === 'task_cancelled')   statusLabel = '取消';
                 else if (status === 'task_deleted')     statusLabel = '任務刪除';
-                else if (status === 'unknown_result')   statusLabel = '不明原因終止'
+                else if (status === 'unknown_result')   statusLabel = '不明原因終止';
+
+                // 重試次數 badge（有重試過才顯示）
+                let retryBadge = '';
+                if (retryCount > 0) {
+                    const modeLabel = {
+                        'forever': '持續', '30m': '30分鐘', '1h': '1小時',
+                        '2h': '2小時', '4h': '4小時', '8h': '8小時'
+                    }[retryMode] || '';
+                    // retryBadge = `<br><small style="color:#e65100; font-weight:bold;">第${retryCount}次重試${modeLabel ? '（' + modeLabel + '）' : ''}</small>`;
+                    retryBadge = `<br><small style="color:#e65100; font-weight:bold;">${modeLabel ? '(' + modeLabel + ')' : ''}</small>`;
+                }
 
                 // --- 解析 train_info 欄位 ---
                 // 格式: 從 [起站] 到 [訖站] (YYYY/MM/DD HH:MM TTTT)
@@ -644,7 +671,7 @@
                     <td class="col-id"><code>${task.id}</code></td>
                     <td>${task.passenger_name || '未指定'}</td>
                     <td>${bookingInfo}</td>
-                    <td><span class="status-${status}">${statusLabel}</span></td>
+                    <td><span class="status-${status}">${statusLabel}</span>${retryBadge}</td>
                     <td>${task.message || '等待中...'}</td>
                     <td><small>${submitTime}</small></td>
                     <td><small>${updateTime}</small></td>
@@ -724,7 +751,8 @@
             seat_class: form.seat_class.value,
             seat_option: form.seat_option.value,
             passenger_internal_id: selectedOption.value,
-            name: selectedOption.dataset.name
+            name: selectedOption.dataset.name,
+            retry_mode: form.retry_mode.value
         };
 
         try {

@@ -371,59 +371,6 @@ def get_captcha_src(page: str) -> Optional[str]:
         logger.error(f"Unable to find element id {target_id}")
         return img_url, None
 
-def inject_jsessionid_to_url_XXX(session: Session, url_path: str) -> Optional[str]:
-    """
-    檢查 URL 路徑是否包含 ';jsessionid='。
-    如果沒有，則嘗試從 Session Cookies 中獲取 JSESSIONID，
-    並將其插入到 '/IMINT/' 與 '?' 之間。
-    """
-    
-    # 1. 檢查字串是否已經包含 ;jsessionid=
-    if ';jsessionid=' in url_path:
-        return url_path
-
-    # 2. 獲取 JSESSIONID
-    try:
-        jsessionid = session.cookies['JSESSIONID']
-        # 確保 session_str 以分號開頭，以便在路徑中作為參數
-        session_str = f";jsessionid={jsessionid}"
-    except KeyError:
-        return None
-
-    # 3. 定位插入點：查找 '/IMINT/'
-    # 這裡我們使用 RegEx 查找 "/IMINT/" 模式
-    imint_match = re.search(r'/IMINT/', url_path)
-    
-    # 4. 定位 URL 中第一個 '?'
-    # 注意：如果 URL 中沒有 '?'，我們仍然要能夠處理
-    query_start_index = url_path.find('?')
-
-    if imint_match:
-        insert_index = imint_match.end() # /IMINT/ 結束的位置
-        
-        # 情況 A: URL 包含 '?' (常見情況，插入在 ? 前面)
-        if query_start_index != -1 and query_start_index > insert_index:
-            # 插入點在 /IMINT/ 和 ? 之間
-            new_url = (
-                url_path[:insert_index] +  # /IMINT/
-                session_str +              # ;jsessionid=...
-                url_path[insert_index:]    # ?wicket:...
-            )
-            return new_url
-        
-        # 情況 B: URL 不包含 '?' (極少見，直接在 /IMINT/ 後面插入)
-        elif query_start_index == -1:
-            # 直接在 /IMINT/ 後面插入 session ID
-            new_url = url_path[:insert_index] + session_str + url_path[insert_index:]
-            return new_url
-        
-        # 情況 C: ? 在 /IMINT/ 之前或格式錯誤
-        else:
-            return None
-    else:
-        # 如果 URL 中根本沒有 /IMINT/，則不進行操作
-        return None
-
 
 # ----------------------------------------------------------------------------
 # 

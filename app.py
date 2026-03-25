@@ -65,22 +65,10 @@ BASE_DIR = os.path.dirname(__file__)
 JSON_DIR = os.path.join(BASE_DIR, "json")
 os.makedirs(JSON_DIR, exist_ok=True)
 
-PASSENGER_FILE  = os.path.join(JSON_DIR, "passenger.json")
-TASKS_FILE      = os.path.join(JSON_DIR, "tasks.json")
-HISTORY_FILE    = os.path.join(JSON_DIR, "history.json")
-ADMIN_FILE      = os.path.join(JSON_DIR, "admin.json")
-TDX_CACHE_FILE  = os.path.join(JSON_DIR, "tdx_cache.json")
-
-# TDX 班次快取有效天數：當天查詢的資料，在乘車日期過後即視為過期
-# 快取結構 (tdx_cache.json):
-# {
-#   "YYYY-MM-DD|origin|destination": {
-#     "trains":      [...],          # get_thsr_timetable_od_by_name 原始回傳
-#     "travel_date": "YYYY-MM-DD",   # 乘車日期，用於判斷是否過期
-#     "cached_at":   "YYYY/MM/DD HH:MM:SS"
-#   },
-#   ...
-# }
+PASSENGER_FILE = os.path.join(JSON_DIR, "passenger.json")
+TASKS_FILE     = os.path.join(JSON_DIR, "tasks.json")
+HISTORY_FILE   = os.path.join(JSON_DIR, "history.json")
+ADMIN_FILE     = os.path.join(JSON_DIR, "admin.json")
 
 # 使用 timedelta 支援 Python 3.8
 CST_TIMEZONE = timezone(timedelta(hours=8))
@@ -136,51 +124,15 @@ for task in booking_tasks:
     # [scott@2026-03-14] status = 'pending' case 也要考慮進去
     # task內容有變, 理論上應該要再回存檔案, 但因下面只要有save_json(TASKS_FILE)就會更新到此異動
     if (task['status'] == 'running') or (task['status'] == 'pending') or (task['status'] == 'cancelling'):
+        retry_count = task.get('retry_count', 0)
+        if retry_count > 0:
+            task['message'] = f'伺服器重啟，任務失敗或已中斷（已重試 {retry_count} 次）。'
+        else:
+            task['message'] = '伺服器重啟，任務失敗或已中斷。'
         task['status'] = 'failed'
-        task['message'] = '伺服器重啟，任務失敗或已中斷。'
         task['update_time'] = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
 
 # current_cancel_event: Optional[threading.Event] = None
-
-# ----------------------------------------------------------------------------
-# 系統啟動時清除已過期的 TDX 班次快取
-# 過期條件：乘車日期 (travel_date) 已早於今天（含今天無需清除，今天的班次仍有效）
-# 仿 tasks.json 的啟動清理邏輯
-# ----------------------------------------------------------------------------
-def _purge_expired_tdx_cache_on_startup():
-    """系統啟動時呼叫一次，清除 tdx_cache.json 中乘車日期已過期的快取。"""
-    if not os.path.exists(TDX_CACHE_FILE):
-        return
-
-    try:
-        with open(TDX_CACHE_FILE, 'r', encoding='utf-8') as f:
-            cache: dict = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        cache = {}
-
-    today = datetime.now(CST_TIMEZONE).date()
-    expired_keys = []
-
-    for key, entry in cache.items():
-        try:
-            travel_date_str = entry.get('travel_date', '')
-            travel_date = datetime.strptime(travel_date_str, '%Y-%m-%d').date()
-            if travel_date < today:   # 乘車日期已過 → 過期
-                expired_keys.append(key)
-        except Exception:
-            expired_keys.append(key)   # 格式異常也視為過期
-
-    if expired_keys:
-        for k in expired_keys:
-            del cache[k]
-        with open(TDX_CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(cache, f, indent=4, ensure_ascii=False)
-        print(f"[TDX Cache] 系統啟動：清除 {len(expired_keys)} 筆過期班次快取。")
-    else:
-        print(f"[TDX Cache] 系統啟動：快取共 {len(cache)} 筆，無過期資料。")
-
-_purge_expired_tdx_cache_on_startup()
-
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
@@ -258,130 +210,6 @@ def get_new_passenger_id():
     full_timestamp = int(time.time() * 1000)
     short_id = full_timestamp % 100000000
     return str(short_id).zfill(8)
-
-
-# ----------------------------------------------------------------------------
-# 從TASKS_FILE載入任務, 格式化訂票資訊以符合訂票任務狀態表格格式, 並整理過期的任務.
-# 將已過期任務拿掉後, 再回存到TASKS_FILE, 並 return 這些任務 ('未完成'及'已完成但
-# 未過期' 任務)
-# Note: 剛執行完任務還不會從TASKS_FILE中移除
-#
-# << 怪奇, 目前沒人呼叫此function>>
-#
-# ----------------------------------------------------------------------------
-def load_tasks_DO_NOT_RUN():
-    """
-    載入任務列表，並清除tasks.json中過期的已完成任務。
-    同時將訂票資訊格式化為 '左營 - 台南 (11-19 23:45)'
-    """
-    global booking_tasks
-
-    with data_lock:
-
-        # # 從檔案載入任務
-        # tasks = load_json(TASKS_FILE) # [cite: 141]
-        
-        # # 依照建立時間 (timestamp) 降冪排序，確保最新提交的在最上面
-        # # 如果任務物件中有 'created_at' 或 'timestamp' 欄位：
-        # tasks.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
-        
-        # # 或者簡單地將列表反轉（如果新任務是 append 在最後面）
-        # # tasks.reverse() 
-        
-        # booking_tasks = tasks
-        
-        booking_tasks = load_json(TASKS_FILE) # 由以上代碼取代
-        
-        FINAL_STATUSES = ['success', 'failed', 'cancelled', 'aborted']
-        retained_tasks = []
-        now_cst = datetime.now(CST_TIMEZONE)
-        
-        expired_count = 0
-        
-        for task in booking_tasks:
-            task_status = task.get('status')
-            
-            # --- START: 格式化訂票資訊 (修正 #1: index.html 路線格式) ---
-            data = task.get('data', {})
-            start_station = data.get('start_station', '?')
-            end_station = data.get('end_station', '?')
-            travel_date = data.get('travel_date', '????/??/??')
-            train_time = data.get('train_time', '??:??')
-            
-            formatted_date = travel_date
-            try:
-                # 嘗試解析常見格式: 'YYYY-MM-DD' 或 'YYYY/MM/DD'
-                date_formats = ['%Y-%m-%d', '%Y/%m/%d']
-                date_obj = None
-                for fmt in date_formats:
-                    try:
-                        date_obj = datetime.strptime(travel_date, fmt)
-                        break
-                    except ValueError:
-                        continue
-                
-                if date_obj:
-                    # 格式化日期為 'MM-DD'
-                    formatted_date = date_obj.strftime('%m-%d')
-                    
-            except Exception:
-                # 確保在任何錯誤情況下都有值
-                pass 
-                
-            # 建立新的格式：'左營 - 台南 (11-19 23:45)'
-            # [scott@2026-03-08] 動態產生'formatted_route'欄位, TASKS_FILE 不需特別存此欄位.
-            task['formatted_route'] = f"{start_station} - {end_station} ({formatted_date} {train_time})"
-            # --- END: 格式化訂票資訊 ---
-            
-            if task_status not in FINAL_STATUSES:
-                # 任務正在進行中 (pending 或 running)，直接保留
-                retained_tasks.append(task)
-                continue
-
-            # [scott@2026-03-08] 以下code都是在處理已完成任務 (FINAL_STATUSES)
-
-            # --- 處理已完成任務的過期邏輯 (保持不變) ---
-            finish_time_str = task.get('finish_time')
-            # ... (省略過期檢查的 if/else 邏輯) ...
-            
-            # [scott@2026-03-08] 'finish_time_str'沒有值的已完成任務, 也要放進 retained_tasks (??), 有可能發生嗎?
-            if not finish_time_str:
-                retained_tasks.append(task)
-                print(f"***** 'finish_time_str'沒有值的已完成任務, 也要放進 retained_tasks --> 真的發生了 *****")
-                continue
-                
-            try:
-                finish_datetime = datetime.strptime(finish_time_str, '%Y/%m/%d %H:%M:%S').replace(tzinfo=CST_TIMEZONE)
-                is_expired = False
-
-                if task_status == 'success':    # 成功 2 天後移除
-                    cutoff_date = (now_cst - timedelta(days=2)).date()
-                    if finish_datetime.date() <= cutoff_date:
-                        is_expired = True
-                        
-                else:   # 失敗/取消 60 分鐘後移除
-                    cutoff_datetime = now_cst - timedelta(minutes=60)
-                    if finish_datetime < cutoff_datetime:
-                        is_expired = True
-                        
-            except Exception:
-                retained_tasks.append(task)
-                continue
-                
-            
-            if is_expired:
-                expired_count += 1
-            else:
-                retained_tasks.append(task)
-
-
-        # 執行清理操作 (儲存更新後的 tasks.json)
-        if expired_count > 0:
-            print(f"Cleaned up {expired_count} expired completed tasks from tasks.json (index.html display).")
-            booking_tasks = retained_tasks
-            save_json(TASKS_FILE, booking_tasks) 
-            
-        return retained_tasks
 
 
 # ----------------------------------------------------------------------------
@@ -507,6 +335,8 @@ def update_task_status(task_id: str, new_status: str, message: str):
         if task is None:
             return
 
+        # [第 N 次重試] 前綴由前端依 retry_count 欄位自行渲染，後端不再塞入 message
+
         task['status'] = new_status
         task['message'] = message
         task['update_time'] = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
@@ -556,103 +386,6 @@ def update_task_status(task_id: str, new_status: str, message: str):
 import requests
 import json
 
-# ----------------------------------------------------------------------------
-# TDX 班次快取輔助函式
-# ----------------------------------------------------------------------------
-
-def _tdx_cache_key(origin: str, destination: str, date: str) -> str:
-    """產生快取字典的 key，格式：'YYYY-MM-DD|origin|destination'"""
-    return f"{date}|{origin}|{destination}"
-
-
-def _load_tdx_cache() -> dict:
-    """讀取 tdx_cache.json，失敗時回傳空 dict。"""
-    if not os.path.exists(TDX_CACHE_FILE):
-        return {}
-    try:
-        with open(TDX_CACHE_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def _save_tdx_cache(cache: dict):
-    """將整份快取寫回 tdx_cache.json。"""
-    with open(TDX_CACHE_FILE, 'w', encoding='utf-8') as f:
-        json.dump(cache, f, indent=4, ensure_ascii=False)
-
-
-def get_trains_with_cache(origin: str, destination: str, date: str,
-                          app_id: str, app_key: str) -> tuple:
-    """
-    先查 tdx_cache.json；快取命中直接回傳，未命中才呼叫外部 API 並存檔。
-    trains 與 discount_map 一併快取，避免每次重複打 THSR 官網。
-
-    Args:
-        origin:      出發站（中文），例如 '台北'
-        destination: 到達站（中文），例如 '台中'
-        date:        乘車日期 'YYYY-MM-DD'
-        app_id / app_key: TDX 憑證
-
-    Returns:
-        (trains: list, discount_map: dict)
-        - trains:       與 get_thsr_timetable_od_by_name 相同格式的班次清單
-        - discount_map: {train_no: bool}，True 表示該班次有大學生優惠
-    """
-    cache_key = _tdx_cache_key(origin, destination, date)
-
-    # ── 讀取快取（帶 lock，保護併發讀寫）──
-    with data_lock:
-        cache = _load_tdx_cache()
-        entry = cache.get(cache_key)
-
-    if entry and 'discount_map' in entry:
-        logger.info(BLUE + f"[TDX Cache] HIT  ({date} {origin}→{destination})，"
-                    f"快取時間: {entry.get('cached_at', '?')}" + RESET)
-        return entry['trains'], entry['discount_map']
-
-    # ── 快取未命中（或舊快取缺少 discount_map）→ 呼叫外部 API ──
-    logger.info(RED + f"[TDX Cache] MISS ({date} {origin}→{destination})，呼叫 TDX API…" + RESET)
-    trains = get_thsr_timetable_od_by_name(
-        app_id=app_id,
-        app_key=app_key,
-        origin_name=origin,
-        destination_name=destination,
-        train_date=date,
-    )
-
-    train_no_list = [t['train_no'] for t in trains]
-
-    # 查詢大學生優惠（失敗時回傳空 dict，不影響主流程）
-    discount_map = check_discounts_for_list(
-        StartStation=origin,
-        EndStation=destination,
-        target_date=date,
-        train_no_list=train_no_list,
-        discount_type='大學生',
-    )
-
-    # ── 將 trains + discount_map 一併存入快取 ──
-    with data_lock:
-        cache = _load_tdx_cache()   # 重新讀取，避免覆蓋其他 key
-        cache[cache_key] = {
-            'trains':       trains,
-            'discount_map': discount_map,
-            'travel_date':  date,
-            'cached_at':    datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S'),
-        }
-        _save_tdx_cache(cache)
-        logger.info(f"[TDX Cache] SAVE ({date} {origin}→{destination})，"
-                    f"共 {len(trains)} 班，存入快取（含優惠資料）。")
-
-    return trains, discount_map
-
-
-# -----------------------------------------------------------------------------
-# 查詢某'日期/班次'高鐵是否有大學生優惠票
-# [注意]: 班次一定要四碼, "508" 不行, 一定要 "0508" 才可以
-# [注意]: 班次若為三碼，程式要自動補 '0'。
-# -----------------------------------------------------------------------------
 def check_discounts_for_list(StartStation, EndStation, target_date, train_no_list, discount_type):
     """
     批次檢查特定日期、多個車次是否有特定類別的優惠。
@@ -810,7 +543,12 @@ def run_booking_worker():
                     print(RESET)
 
                     # 這裡調用 update_task_status 會再次獲取鎖，但由於操作快，不會造成死鎖
-                    update_task_status(task_to_run['task_id'], 'running', '開始執行訂票流程...')
+                    retry_count = task_to_run.get('retry_count', 0)
+                    if retry_count > 0:
+                        start_msg = f'開始第 {retry_count} 次重試訂票流程...'
+                    else:
+                        start_msg = '開始執行訂票流程...'
+                    update_task_status(task_to_run['task_id'], 'running', start_msg)
 
         # Lock is released here
         
@@ -863,6 +601,52 @@ def run_booking_worker():
                         # if '被使用者取消' not in result_msg:
                         #     result_msg = '使用者中斷任務'
                     
+                    # --- START: booking_failed 重試邏輯 ---
+                    if final_status == 'booking_failed':
+                        retry_mode = current_task.get('retry_mode', 'stop')
+                        retry_count = current_task.get('retry_count', 0)
+                        retry_deadline_str = current_task.get('retry_deadline')
+
+                        # 計算 retry_deadline（僅首次失敗時設定）
+                        RETRY_MODE_MINUTES = {
+                            '30m': 30, '1h': 60, '2h': 120, '4h': 240, '8h': 480
+                        }
+                        if retry_mode in RETRY_MODE_MINUTES and retry_deadline_str is None:
+                            minutes = RETRY_MODE_MINUTES[retry_mode]
+                            deadline = datetime.now(CST_TIMEZONE) + timedelta(minutes=minutes)
+                            retry_deadline_str = deadline.strftime('%Y/%m/%d %H:%M:%S')
+                            current_task['retry_deadline'] = retry_deadline_str
+
+                        # 判斷是否應重試
+                        should_retry = False
+                        if retry_mode == 'forever':
+                            should_retry = True
+                        elif retry_mode in RETRY_MODE_MINUTES and retry_deadline_str:
+                            try:
+                                deadline_dt = datetime.strptime(retry_deadline_str, '%Y/%m/%d %H:%M:%S').replace(tzinfo=CST_TIMEZONE)
+                                if datetime.now(CST_TIMEZONE) < deadline_dt:
+                                    should_retry = True
+                            except Exception:
+                                pass
+
+                        if should_retry:
+                            retry_count += 1
+                            current_task['retry_count'] = retry_count
+                            current_task['last_fail_reason'] = result_msg   # 單獨保存上次失敗原因
+                            current_task['status'] = 'pending'
+                            current_task['message'] = f'準備第 {retry_count} 次重試...'
+                            current_task['update_time'] = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
+                            save_json(TASKS_FILE, booking_tasks)
+                            logger.info(f"任務 {current_running_task_id} 訂票失敗，將進行第 {retry_count} 次重試 (retry_mode={retry_mode})")
+                            current_running_task_id = None
+                            current_cancel_event = None
+                            continue  # 直接進入下一輪 worker 迴圈
+                        else:
+                            # 不重試，標記為最終失敗
+                            if retry_count > 0:
+                                result_msg = f'訂票失敗（已重試 {retry_count} 次）。{result_msg}'
+                    # --- END: booking_failed 重試邏輯 ---
+
                     # 如果成功，將結果寫入 history.json (略過)
                     # 確保將訂位代號存入 task 物件
                     if final_status == 'booking_success' and '訂位代號:' in result_msg:
@@ -1027,12 +811,18 @@ def submit_booking():
 
         current_time_cst = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
 
+        # retry_mode 由前端傳入，預設為 'stop'（不重試）
+        retry_mode = data.pop('retry_mode', 'stop') or 'stop'
+
         new_task = {
             'task_id': task_id,
             'status': 'pending',
             'submit_time': current_time_cst,
             'update_time': current_time_cst,
             'message': '等待執行...',
+            'retry_mode': retry_mode,   # 'stop' | 'forever' | '30m' | '1h' | '2h' | '4h' | '8h'
+            'retry_count': 0,           # 累計重試次數
+            'retry_deadline': None,     # ISO 字串，到期時間 (None = 無限或不重試)
             'data': data # 此處的 data 已經包含了從後端查找並添加的 personal_id 等敏感資訊
         }
 
@@ -1078,7 +868,11 @@ def get_booking_status():
             'submit_time': task['submit_time'],
             'update_time': task['update_time'],
             'train_info': f"從 {data.get('start_station', '?')} 到 {data.get('end_station', '?')} ({data.get('travel_date', '?')} {data.get('train_time', '?')} {data.get('train_no', '')})",
-            'passenger_name': data.get('name', '?')
+            'passenger_name':   data.get('name', '?'),
+            'retry_count':      task.get('retry_count', 0),
+            'retry_mode':       task.get('retry_mode', 'stop'),
+            'retry_deadline':   task.get('retry_deadline'),
+            'last_fail_reason': task.get('last_fail_reason', ''),   # ← 上次失敗原因
         })
         
     worker_status = 'running' if booking_thread and booking_thread.is_alive() and current_running_task_id else 'idle'
@@ -1507,17 +1301,27 @@ def api_get_trains():
         return jsonify({'status': 'error', 'message': '缺少必要參數 origin / destination / date'}), 400
 
     try:
-        trains, discount_map = get_trains_with_cache(
-            origin=origin,
-            destination=destination,
-            date=date,
+        trains = get_thsr_timetable_od_by_name(
             app_id=TDX_APP_ID,
             app_key=TDX_APP_KEY,
+            origin_name=origin,
+            destination_name=destination,
+            train_date=date,
         )
 
         train_no_list = [t['train_no'] for t in trains]
         logger.info(f'({date} {origin}-{destination}) 高鐵班次共有{len(train_no_list)}班: {train_no_list}')
 
+        # 查詢大學生優惠，失敗時回傳空 dict，不影響主流程
+        discount_map = check_discounts_for_list(
+            StartStation=origin,
+            EndStation=destination,
+            target_date=date,
+            train_no_list=train_no_list,
+            discount_type='大學生',
+        )
+        # logger.info(f'大學生優惠票查詢結果 {discount_map}')
+    
         # 有優惠的班次在 label 末尾加 ' *'
         for t in trains:
             has_discount = discount_map.get(t['train_no'], False)
