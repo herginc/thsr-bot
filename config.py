@@ -163,6 +163,23 @@ TDX_APP_ID  = os.environ.get("TDX_APP_ID")
 TDX_APP_KEY = os.environ.get("TDX_APP_KEY")
 
 # ----------------------------------------------------------------------------
+# Gmail Configuration
+# ----------------------------------------------------------------------------
+NOTIFY_SENDER_EMAIL    = os.environ.get('NOTIFY_SENDER_EMAIL', '')
+NOTIFY_SENDER_PASSWORD = os.environ.get('NOTIFY_SENDER_PASSWORD', '')
+
+# ----------------------------------------------------------------------------
+# LINE Configuration
+# ----------------------------------------------------------------------------
+CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
+
+# ----------------------------------------------------------------------------
+# TWILIO Configuration
+# ----------------------------------------------------------------------------
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
+TWILIO_AUTH_TOKEN  = os.environ.get('TWILIO_AUTH_TOKEN', '')
+
+# ----------------------------------------------------------------------------
 # Advanced Configuration
 # ----------------------------------------------------------------------------
 

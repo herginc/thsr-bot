@@ -25,14 +25,15 @@ import booking
 import proxy
 from config import *
 from tdx_api import get_thsr_timetable_od_by_name
+from stmp_sms import send_email, send_LINE_message
 
 # ----------------------------------------------------------------------------
 # 訂票模式切換
 # True  → 使用 booking.thsr_run_booking_flow_with_data (模擬版本，用於開發/測試)
 # False → 使用 proxy.thsr_run_booking_flow             (真實版本，連接高鐵官網)
 # ----------------------------------------------------------------------------
-# USE_MOCK_BOOKING = True
-USE_MOCK_BOOKING = False
+USE_MOCK_BOOKING = True
+# USE_MOCK_BOOKING = False
 
 
 # ----------------------------------------------------------------------------
@@ -507,6 +508,132 @@ def check_discounts_for_list(StartStation, EndStation, target_date, train_no_lis
 
 
 # ----------------------------------------------------------------------------
+# 高鐵訂票成功後，發送 Email 及 LINE 通知
+# 整合自 thsr_v3_3.py: send_thsr_booking_information / example_send_thsr_booking_information
+# ----------------------------------------------------------------------------
+
+STATION_EN_MAP = {
+    '南港': 'NanGang', '台北': 'TPE', '板橋': 'BanQiao', '桃園': 'TaoYuan',
+    '新竹': 'HSU',     '苗栗': 'MiaoLi', '台中': 'TaiChung', '彰化': 'ZhangHua',
+    '雲林': 'YunLin',  '嘉義': 'JiaYi', '台南': 'TaiNan',   '左營': 'ZuoYing',
+}
+
+def _station_en(stn: str) -> str:
+    return STATION_EN_MAP.get(stn, stn)
+
+def send_thsr_booking_information(task_data: dict, result_msg: str):
+    """
+    訂票成功後，根據 task_data（來自 booking_tasks）及 result_msg 組裝通知訊息，
+    並透過 Email 及 LINE 發送。
+
+    task_data 預期包含：
+        name, personal_id, phone_num, email, identity,
+        start_station, end_station, travel_date, train_no, train_time
+    result_msg 預期包含：
+        '訂位代號: XXXXXXXX'、'座位: XX車XXX'、'票價: TWD XXX'、'付款期限: ...' 等資訊
+        (由 proxy.thsr_run_booking_flow 回傳)
+    """
+    try:
+        # --- 從 task_data 取得基本資訊 ---
+        name          = task_data.get('name', 'Unknown')
+        personal_id   = task_data.get('personal_id', '')
+        email_addr    = task_data.get('email', '')
+        phone_num     = task_data.get('phone_num', '')
+        identity      = task_data.get('identity', 'adult')
+        departure_stn = task_data.get('start_station', '')
+        arrival_stn   = task_data.get('end_station', '')
+        travel_date   = task_data.get('travel_date', '')   # 'YYYY/MM/DD'
+        train_no      = task_data.get('train_no', '')
+        train_time    = task_data.get('train_time', '')    # 出發時間 'HH:MM'
+
+        # --- 從 result_msg 解析訂位資訊 ---
+        def _parse(pattern, default='N/A'):
+            m = re.search(pattern, result_msg)
+            return m.group(1).strip() if m else default
+
+        pnr_code         = _parse(r'訂位代號[：:]\s*(\S+)')
+        seat_label       = _parse(r'座位[：:]\s*(\S+)')
+        total_price      = _parse(r'票價[：:]\s*(TWD\s*\S+|[0-9]+\s*元|\S+)')
+        payment_deadline = _parse(r'付款期限[：:]\s*(.+?)(?:\n|$)')
+        arr_time         = _parse(r'到達時間[：:]\s*(\S+)')   # 若 proxy 有回傳
+
+        # 身份證遮罩 (前4碼 + * + 末1碼)
+        if personal_id and len(personal_id) > 5:
+            masked_pid = personal_id[:4] + '*' * (len(personal_id) - 5) + personal_id[-1]
+        else:
+            masked_pid = '*' * len(personal_id)
+
+        # 判斷是否學生票
+        is_student = identity in ('university', 'student', '大學生')
+
+        # 日期格式化 (取 MM/DD)
+        try:
+            dt = datetime.strptime(travel_date.replace('-', '/'), '%Y/%m/%d')
+            departure_date_short = dt.strftime('%m/%d')
+        except Exception:
+            departure_date_short = travel_date
+
+        # 訂位時間
+        booking_date = datetime.now(CST_TIMEZONE).strftime('%m/%d %I:%M%p').lower()
+
+        # 付款期限 (英文簡版)
+        if payment_deadline == '發車前30分' or payment_deadline == 'N/A':
+            payment_deadline_e = departure_date_short
+        else:
+            payment_deadline_e = payment_deadline[-5:] if len(payment_deadline) >= 5 else payment_deadline
+
+        # 座位標籤英文化 (例: '4車2A' → '4-2A')
+        seat_label_e = seat_label.replace('車', '-')
+
+        # --- 組裝中文訊息 (Email body / LINE) ---
+        price_display = '學生票價' if is_student else total_price
+
+        msg = (
+            f'訂位日期: {booking_date}\n'
+            f'訂位代號: {pnr_code}\n'
+            f'高鐵車次: {train_no}\n'
+            f'乘車日期: {departure_date_short}\n'
+            f'出發時間: {departure_stn} {train_time}\n'
+            f'到達時間: {arrival_stn} {arr_time}\n'
+            f'高鐵座位: {seat_label}\n'
+            f'身份字號: {masked_pid}\n'
+            f'付款金額: {price_display}\n'
+            f'付款期限: {payment_deadline}'
+        )
+
+        # --- 組裝英文 SMS 訊息 ---
+        dep_en = _station_en(departure_stn)
+        arr_en = _station_en(arrival_stn)
+        price_e = 'Student' if is_student else total_price
+
+        sms_body = (
+            f'\nReservation: {pnr_code}\n'
+            f'Date: {departure_date_short}, {dep_en} {train_time} - {arr_en} {arr_time}\n'
+            f'Seat: {seat_label_e}\n'
+            f'ID No: {masked_pid}\n'
+            f'Price: {price_e} (Due: {payment_deadline_e})'
+        )
+
+        # --- 發送 Email ---
+        email_ctx = {
+            'sender_email'    : NOTIFY_SENDER_EMAIL,
+            'sender_password' : NOTIFY_SENDER_PASSWORD,
+            'recipient_email' : email_addr,
+            'email_subject'   : '"高鐵訂票成功"',
+            'email_body'      : msg,
+        }
+        send_email(email_ctx)
+
+        # --- 發送 LINE ---
+        send_LINE_message(msg)
+
+        logger.info(f"[通知] 訂票成功通知已發送 → {name} ({email_addr}), 訂位代號: {pnr_code}")
+
+    except Exception as e:
+        logger.error(f"[通知] 發送訂票通知失敗: {e}", exc_info=True)
+
+
+# ----------------------------------------------------------------------------
 # Worker Function for booking.py (Req 0, 1, 4, 5)
 # ----------------------------------------------------------------------------
 def run_booking_worker():
@@ -655,6 +782,13 @@ def run_booking_worker():
                         if match:
                             booking_code = match.group(1)
                             current_task['booking_code'] = booking_code # <--- **新增這行**
+                    
+                        # 發送 Email / LINE 訂票成功通知
+                        threading.Thread(
+                            target=send_thsr_booking_information,
+                            args=(task_to_run['data'], result_msg),
+                            daemon=True
+                        ).start()
                     
                     update_task_status(current_running_task_id, final_status, result_msg)
 

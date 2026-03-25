@@ -9,3 +9,4 @@ sample_code/
 *.json
 *.backup
 *.tar.gz
+setenv.sh
