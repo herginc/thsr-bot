@@ -59,9 +59,74 @@ The program will be developed and tested in the following environments.
 
 5) Google Cloud VM - Ubuntu 24.04 TLS
    ```
-   Linux 6.8.10 + Python 3.10.12
+   Linux 6.17.0 + Python 3.12.3 (2026-03-26)
+   start Flask server from the Linux system service when VM startup, or
    $ gunicorn --bind 0.0.0.0:8000 app:app
    ```
+
+   在 GCE 上跑 Flask，請檢查：
+   - GCP Firewall： 是否有在控制台開啟 Port (例如 8000 或 80) 的流量。
+     - 新增一條規則：來源 0.0.0.0/0，協議與埠 tcp:8000，目標標記可設為 http-server。
+   - Flask Host： 程式碼中必須設為 app.run(host='0.0.0.0') 才能接受外部連線，預設的 127.0.0.1 只會聽 VM 內部的請求。
+
+   正式環境推薦 — Systemd 配置 (最穩定)
+
+   將 THSR-Bot 寫成 System Service，當 VM 開機時（or 當掉或自動重啟時）自動啟動 Flask Server。
+
+   Note: 若 THSR-Bot 是在 Terimal 中被執行時，當 Terminal 結束（or 斷線）, THSR-Bot 會自動結束
+
+   1. 建立設定檔：sudo nano /etc/systemd/system/flask_app.service (see content below)
+   2. 啟動服務
+
+      ```
+      sudo systemctl start flask_app
+      sudo systemctl enable flask_app (設定開機自啟)
+      ```
+
+   重新載入 Systemd 管理員設定：
+   ```
+   sudo systemctl daemon-reload
+   ```
+
+   設定為開機自動啟動：
+   ```
+   sudo systemctl enable thsr-bot
+   ```
+
+   啟動服務：
+   ```
+   sudo systemctl start thsr-bot
+   ```
+
+   檢查狀態（確認顯示綠色的 active）：
+   ```
+   sudo systemctl status thsr-bot
+   ```
+
+   查看即時 Log (debug用)：
+   ```
+   # -u 代表指定服務, -f 代表即時追蹤 (follow)
+   journalctl -u thsr-bot -f
+   ```
+
+   重新載入服務：
+   ```
+   # 重新載入設定 (如果有修改到 system service 時)
+   sudo systemctl daemon-reload
+
+   # 重啟服務 (如果有修改到 app.py 或 其他代碼)
+   sudo systemctl restart thsr-bot
+   ```
+
+
+
+   ```
+   (venv) herginc@ubuntu-20260323:~/source/thsr-bot$ sudo systemctl daemon-reload
+   (venv) herginc@ubuntu-20260323:~/source/thsr-bot$ sudo systemctl enable thsr-bot
+   Created symlink /etc/systemd/system/multi-user.target.wants/thsr-bot.service → /etc/systemd/system/thsr-bot.service.
+   (venv) herginc@ubuntu-20260323:~/source/thsr-bot$ sudo systemctl start thsr-bot
+   ```
+
 
 ### Front-End Client:
 

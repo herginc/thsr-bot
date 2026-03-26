@@ -32,8 +32,8 @@ from stmp_sms import send_email, send_LINE_message
 # True  → 使用 booking.thsr_run_booking_flow_with_data (模擬版本，用於開發/測試)
 # False → 使用 proxy.thsr_run_booking_flow             (真實版本，連接高鐵官網)
 # ----------------------------------------------------------------------------
-USE_MOCK_BOOKING = True
-# USE_MOCK_BOOKING = False
+# USE_MOCK_BOOKING = True
+USE_MOCK_BOOKING = False
 
 
 # ----------------------------------------------------------------------------
@@ -151,6 +151,7 @@ def start_booking_worker_thread():
         print(f"[{datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')}] 啟動背景訂票 worker 執行緒...")
         booking_thread = threading.Thread(target=run_booking_worker, daemon=True)
         booking_thread.start()
+
 
 # ----------------------------------------------------------------------------
 # Sensitive data 遮罩
@@ -1472,14 +1473,8 @@ def api_get_trains():
         return jsonify({'status': 'error', 'message': f'查詢失敗: {str(e)}'}), 500
 
 
-# 將啟動函式保留為一般函式
-# def start_booking_worker_thread():
-#     global booking_thread
-#     # 這裡不需要加鎖，因為只在啟動時執行一次
-#     if booking_thread is None or not booking_thread.is_alive():
-#         print(f"[{datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')}] 啟動背景訂票 worker 執行緒...")
-#         booking_thread = threading.Thread(target=run_booking_worker, daemon=True)
-#         booking_thread.start()
+# [scott@2026-03-26] 移到這裡！確保 Gunicorn 載入時就會啟動 Worker
+start_booking_worker_thread()
 
 
 if __name__ == "__main__":
@@ -1488,7 +1483,7 @@ if __name__ == "__main__":
     # [scott@2026-03-14] 是否應該移到最上面, 理由如下:
     #     為了確保 Gunicorn worker 也啟動，請將 start_booking_worker_thread()
     #     放在 app = Flask(__name__) 之後的頂層代碼區塊。
-    start_booking_worker_thread()
+    # start_booking_worker_thread()
 
     arg_parser = ArgumentParser(
         usage='Usage: python ' + __file__ + ' [--port <port>] [--help]'
