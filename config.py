@@ -171,7 +171,7 @@ NOTIFY_SENDER_PASSWORD = os.environ.get('NOTIFY_SENDER_PASSWORD', '')
 # ----------------------------------------------------------------------------
 # LINE Configuration
 # ----------------------------------------------------------------------------
-CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
+CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN') or os.environ.get('CHANNEL_ACCESS_TOKEN')
 
 # ----------------------------------------------------------------------------
 # TWILIO Configuration

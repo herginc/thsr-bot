@@ -110,7 +110,11 @@ def thsr_run_booking_flow_with_data(
             raise Exception("使用者放棄即將開始的訂票任務")
 
         # 1. 初始化 Session
-        session = session_init()
+        if random.random() < 0.3: # 模擬 30% 成功率
+            session = None
+        else:
+            session = session_init()
+
         if not session:
             raise Exception("Session 初始化失敗")
         status_updater(task_id, 'running', 'Session 初始化成功。準備開始訂票步驟...')
@@ -136,7 +140,7 @@ def thsr_run_booking_flow_with_data(
             elif step == 7: 
                 result_message = "等待系統回應訂位代號..."
             elif step == total_steps:
-                if random.random() > 0.3: # 模擬 70% 成功率
+                if random.random() > 0.4: # 模擬 60% 成功率
                     final_status = 'booking_success'
                     code = ''.join(random.choices('ABCDEFGHJKLMNPQRSTUVWXYZ123456789', k=6)) 
                     result_message = f"訂位代號: {code}"  # 訂票成功

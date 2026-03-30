@@ -324,6 +324,10 @@ def send_LINE_message(line_msg):
     if (really_send_message == True):
         # 從環境變數或直接設定您的 Channel Access Token (CHANNEL_ACCESS_TOKEN)
 
+        if not CHANNEL_ACCESS_TOKEN:
+            print("[Error] LINE_CHANNEL_ACCESS_TOKEN is not set in environment variables.")
+            return False
+
         line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
 
         messages = [

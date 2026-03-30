@@ -3,10 +3,13 @@
 # =======================================================
 
 # Must for Render environment
-import gevent.monkey
-gevent.monkey.patch_all()
-
 import os
+# gevent monkey patching can interfere with debuggers.
+# We only enable it in production (Render) or when explicitly requested.
+if os.environ.get('DEPLOY_ENV') == 'Render' or os.environ.get('GEVENT_SUPPORT') == 'True':
+    import gevent.monkey
+    gevent.monkey.patch_all()
+
 # import sys
 import re
 import json
@@ -28,12 +31,17 @@ from tdx_api import get_thsr_timetable_od_by_name
 from stmp_sms import send_email, send_LINE_message
 
 # ----------------------------------------------------------------------------
+# 訂票頻率排程模組
+# ----------------------------------------------------------------------------
+from booking_schedule import BookingScheduler, parse_departure_dt
+
+# ----------------------------------------------------------------------------
 # 訂票模式切換
 # True  → 使用 booking.thsr_run_booking_flow_with_data (模擬版本，用於開發/測試)
 # False → 使用 proxy.thsr_run_booking_flow             (真實版本，連接高鐵官網)
 # ----------------------------------------------------------------------------
-# USE_MOCK_BOOKING = True
-USE_MOCK_BOOKING = False
+USE_MOCK_BOOKING = True
+# USE_MOCK_BOOKING = False
 
 
 # ----------------------------------------------------------------------------
@@ -66,10 +74,11 @@ BASE_DIR = os.path.dirname(__file__)
 JSON_DIR = os.path.join(BASE_DIR, "json")
 os.makedirs(JSON_DIR, exist_ok=True)
 
-PASSENGER_FILE = os.path.join(JSON_DIR, "passenger.json")
-TASKS_FILE     = os.path.join(JSON_DIR, "tasks.json")
-HISTORY_FILE   = os.path.join(JSON_DIR, "history.json")
-ADMIN_FILE     = os.path.join(JSON_DIR, "admin.json")
+PASSENGER_FILE    = os.path.join(JSON_DIR, "passenger.json")
+TASKS_FILE        = os.path.join(JSON_DIR, "tasks.json")
+HISTORY_FILE      = os.path.join(JSON_DIR, "history.json")
+ADMIN_FILE        = os.path.join(JSON_DIR, "admin.json")
+TIMETABLE_FILE    = os.path.join(JSON_DIR, "timetable_cache.json")  # TDX 班次查詢快取
 
 # 使用 timedelta 支援 Python 3.8
 CST_TIMEZONE = timezone(timedelta(hours=8))
@@ -130,7 +139,7 @@ for task in booking_tasks:
             task['message'] = f'伺服器重啟，任務失敗或已中斷（已重試 {retry_count} 次）。'
         else:
             task['message'] = '伺服器重啟，任務失敗或已中斷。'
-        task['status'] = 'failed'
+        task['status'] = 'booking_failed'
         task['update_time'] = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
 
 # current_cancel_event: Optional[threading.Event] = None
@@ -138,6 +147,11 @@ for task in booking_tasks:
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
+
+# ----------------------------------------------------------------------------
+# 全域 BookingScheduler 實例（啟動時載入 booking_schedule.yaml）
+# ----------------------------------------------------------------------------
+booking_scheduler = BookingScheduler()
 
 
 # ----------------------------------------------------------------------------
@@ -220,7 +234,7 @@ def get_new_passenger_id():
 def load_history():
     """
     載入歷史紀錄 (history.json)，並清理超過 365 天的紀錄。
-    同時格式化所有 history.html 所需的欄位。
+    同時格式化所有 history.html 所需的欄位。此函式僅用於讀取和格式化，不修改檔案。
     """
     with data_lock:
         history_list = load_json(HISTORY_FILE)
@@ -246,7 +260,7 @@ def load_history():
                     data = h.get('data', {})
                     
                     # 1. 訂票結果
-                    h['result_text'] = {'success': '成功', 'failed': '失敗', 'task_cancelled': '取消', 'task_aborted': '放棄'}.get(h.get('result', ''), '未知')
+                    h['result_text'] = {'booking_success': '成功', 'booking_failed': '失敗', 'task_cancelled': '取消', 'task_aborted': '放棄'}.get(h.get('result', ''), '未知')
                     
                     # 2. 訂票時間 (finish_time)
                     h['formatted_order_date'] = finish_datetime.strftime('%Y/%m/%d %H:%M:%S')
@@ -271,21 +285,79 @@ def load_history():
                 print(f"Warning: History item date parsing failed for task {h.get('task_id', 'N/A')}. Error: {e}")
                 retained_history.append(h)
                 
-        
-        # ... (省略儲存 logic) ...
-        if expired_count > 0:
-            print(f"Cleaned up {expired_count} expired history entries (older than {retention_days} days).")
-            # 儲存時，只保留原始資料，不保留格式化欄位
-            keys_to_keep = list(h.keys()) # 取得所有鍵
-            history_to_save = []
-            for h_item in retained_history:
-                # 避免將格式化欄位寫入檔案
-                original_item = {k: v for k, v in h_item.items() if not k.startswith('formatted_') and k not in ['result_text', 'from_info', 'to_info']}
-                history_to_save.append(original_item)
+        # This function only filters for display. It does not persist the cleanup to the file.
+        # If persistent cleanup is desired, it should be implemented in a separate function.
 
-            save_json(HISTORY_FILE, history_to_save)
-        
         return retained_history
+
+def load_tasks():
+    """
+    載入並清理已完成且過期的任務：
+    - 成功 (success)：1 天 (24 小時) 後從列表移除。
+    - 失敗/取消/異常 (failed, cancelled, aborted, unknown)：120 分鐘後從列表移除。
+    移除前會確保任務已歸檔至 history.json。
+    """
+    global booking_tasks
+    with data_lock:
+        now_cst = datetime.now(CST_TIMEZONE)
+        # 仍在進行中的狀態，不進行清理
+        ACTIVE_STATUSES = ['pending', 'running', 'cancelling']
+        
+        retained_tasks = []
+        expired_count = 0
+        history_list = None
+        
+        for task in booking_tasks:
+            status = task.get('status')
+            
+            # 若為進行中任務，直接保留
+            if status in ACTIVE_STATUSES:
+                retained_tasks.append(task)
+                continue
+            
+            finish_time_str = task.get('finish_time')
+            if not finish_time_str:
+                retained_tasks.append(task)
+                continue
+                
+            try:
+                finish_dt = datetime.strptime(finish_time_str, '%Y/%m/%d %H:%M:%S').replace(tzinfo=CST_TIMEZONE)
+                
+                is_expired = False
+                if status == 'booking_success':
+                    # 成功任務：1 天後移除
+                    if (now_cst - finish_dt) >= timedelta(days=1):
+                        is_expired = True
+                else:
+                    # 失敗、取消或其他異常任務：120 分鐘後移除
+                    if (now_cst - finish_dt) >= timedelta(minutes=120):
+                        is_expired = True
+                
+                if is_expired:
+                    # 清理前確保已歸檔到歷史紀錄
+                    if history_list is None:
+                        history_list = load_json(HISTORY_FILE) or []
+                    
+                    if not any(h.get('task_id') == task['task_id'] for h in history_list):
+                        history_entry = task.copy()
+                        history_entry['result'] = status
+                        history_list.append(history_entry)
+                        save_json(HISTORY_FILE, history_list)
+                        logger.info(f"任務 {task['task_id']} 在清理前已自動補歸檔至歷史紀錄。")
+                    
+                    expired_count += 1
+                else:
+                    retained_tasks.append(task)
+            except Exception as e:
+                logger.warning(f"處理任務 {task.get('task_id')} 清理時發生錯誤: {e}")
+                retained_tasks.append(task)
+                
+        if expired_count > 0:
+            booking_tasks = retained_tasks
+            save_json(TASKS_FILE, booking_tasks)
+            logger.info(f"已從活動列表中清理 {expired_count} 筆過期任務。")
+            
+        return list(booking_tasks)
 
 
 # ----------------------------------------------------------------------------
@@ -343,7 +415,7 @@ def update_task_status(task_id: str, new_status: str, message: str):
         task['message'] = message
         task['update_time'] = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
 
-        FINAL_STATUSES = ['success', 'failed', 'cancelled', 'aborted']
+        FINAL_STATUSES = ['booking_success', 'booking_failed', 'task_cancelled', 'task_aborted', 'unknown_result']
         if new_status in FINAL_STATUSES:
             # 1. 更新任務完成時間
             task['finish_time'] = task['update_time'] 
@@ -368,12 +440,10 @@ def update_task_status(task_id: str, new_status: str, message: str):
             if any(h.get('task_id') == task_id for h in history_list):
                  # 如果已存在，則不重複寫入
                  print(f"Warning: Task {task_id} already exists in history.json. Skipping re-archiving.")
-                 return
-            
-            history_list.append(history_entry)
-            save_json(HISTORY_FILE, history_list) 
-            
-            print(f"Task {task_id} completed ({new_status}). Archived to history.json immediately.")
+            else:
+                history_list.append(history_entry)
+                save_json(HISTORY_FILE, history_list) 
+                print(f"Task {task_id} completed ({new_status}). Archived to history.json immediately.")
             
         save_json(TASKS_FILE, booking_tasks)
 
@@ -501,6 +571,16 @@ def check_discounts_for_list(StartStation, EndStation, target_date, train_no_lis
         else:
             logger.error(f"API 請求失敗: HTTP {response.status_code}, body: {response.text[:300]}")
 
+    except requests.exceptions.Timeout:
+        logger.warning(
+            f"[check_discounts_for_list] 優惠查詢逾時"
+            f"（{StartStation}→{EndStation} {target_date}），略過優惠資訊"
+        )
+    except requests.exceptions.ConnectionError as e:
+        logger.warning(
+            f"[check_discounts_for_list] 優惠查詢連線失敗"
+            f"（{StartStation}→{EndStation}）：{e}，略過優惠資訊"
+        )
     except Exception as e:
         logger.error(f"執行錯誤: {e}", exc_info=True)
 
@@ -529,10 +609,10 @@ def send_thsr_booking_information(task_data: dict, result_msg: str):
 
     task_data 預期包含：
         name, personal_id, phone_num, email, identity,
-        start_station, end_station, travel_date, train_no, train_time
+        start_station, end_station, travel_date, train_no,
+        train_time, dep_time (radio33 模式的精確出發時間)
     result_msg 預期包含：
-        '訂位代號: XXXXXXXX'、'座位: XX車XXX'、'票價: TWD XXX'、'付款期限: ...' 等資訊
-        (由 proxy.thsr_run_booking_flow 回傳)
+        '訂位代號: XXXXXXXX' (由 proxy.thsr_run_booking_flow 回傳)
     """
     try:
         # --- 從 task_data 取得基本資訊 ---
@@ -545,9 +625,27 @@ def send_thsr_booking_information(task_data: dict, result_msg: str):
         arrival_stn   = task_data.get('end_station', '')
         travel_date   = task_data.get('travel_date', '')   # 'YYYY/MM/DD'
         train_no      = task_data.get('train_no', '')
-        train_time    = task_data.get('train_time', '')    # 出發時間 'HH:MM'
 
-        # --- 從 result_msg 解析訂位資訊 ---
+        # 出發時間：dep_time（radio33 TDX 精確時間）優先，fallback train_time
+        dep_time  = (task_data.get('dep_time')   or '').strip()
+        train_time = (task_data.get('train_time') or '').strip()
+        dep_time_display = dep_time or train_time or 'N/A'
+
+        # 到達時間：從 timetable_cache.json 查詢（用 travel_date + 起訖站 + train_no）
+        arr_time_display = 'N/A'
+        try:
+            raw_date   = travel_date.replace('/', '-')  # cache key 用 YYYY-MM-DD
+            cache_key  = f"{raw_date}|{departure_stn}|{arrival_stn}"
+            cache      = load_json(TIMETABLE_FILE) or {}
+            trains_for_day = cache.get(cache_key, [])
+            for t in trains_for_day:
+                if t.get('train_no') == train_no:
+                    arr_time_display = t.get('arr_time', 'N/A')
+                    break
+        except Exception as e:
+            logger.warning(f"[send_thsr] 查詢到達時間失敗: {e}")
+
+        # --- 從 result_msg 解析訂位代號（唯一可靠來源）---
         def _parse(pattern, default='N/A'):
             m = re.search(pattern, result_msg)
             return m.group(1).strip() if m else default
@@ -556,7 +654,6 @@ def send_thsr_booking_information(task_data: dict, result_msg: str):
         seat_label       = _parse(r'座位[：:]\s*(\S+)')
         total_price      = _parse(r'票價[：:]\s*(TWD\s*\S+|[0-9]+\s*元|\S+)')
         payment_deadline = _parse(r'付款期限[：:]\s*(.+?)(?:\n|$)')
-        arr_time         = _parse(r'到達時間[：:]\s*(\S+)')   # 若 proxy 有回傳
 
         # 身份證遮罩 (前4碼 + * + 末1碼)
         if personal_id and len(personal_id) > 5:
@@ -565,7 +662,7 @@ def send_thsr_booking_information(task_data: dict, result_msg: str):
             masked_pid = '*' * len(personal_id)
 
         # 判斷是否學生票
-        is_student = identity in ('university', 'student', '大學生')
+        is_student = identity in ('university', 'student', '大學生', 'college')
 
         # 日期格式化 (取 MM/DD)
         try:
@@ -594,8 +691,8 @@ def send_thsr_booking_information(task_data: dict, result_msg: str):
             f'訂位代號: {pnr_code}\n'
             f'高鐵車次: {train_no}\n'
             f'乘車日期: {departure_date_short}\n'
-            f'出發時間: {departure_stn} {train_time}\n'
-            f'到達時間: {arrival_stn} {arr_time}\n'
+            f'出發時間: {departure_stn} {dep_time_display}\n'
+            f'到達時間: {arrival_stn} {arr_time_display}\n'
             f'高鐵座位: {seat_label}\n'
             f'身份字號: {masked_pid}\n'
             f'付款金額: {price_display}\n'
@@ -609,7 +706,7 @@ def send_thsr_booking_information(task_data: dict, result_msg: str):
 
         sms_body = (
             f'\nReservation: {pnr_code}\n'
-            f'Date: {departure_date_short}, {dep_en} {train_time} - {arr_en} {arr_time}\n'
+            f'Date: {departure_date_short}, {dep_en} {dep_time_display} - {arr_en} {arr_time_display}\n'
             f'Seat: {seat_label_e}\n'
             f'ID No: {masked_pid}\n'
             f'Price: {price_e} (Due: {payment_deadline_e})'
@@ -640,8 +737,19 @@ def send_thsr_booking_information(task_data: dict, result_msg: str):
 def run_booking_worker():
     global current_running_task_id
     global current_cancel_event
-    
+
+    # 下一輪迴圈開始前，需要在鎖外等待的秒數（由 BookingScheduler 決定）
+    # 設計原則：delay sleep 必須在 with data_lock 區塊之外執行，避免長時間持鎖阻塞 Flask 請求
+    _pending_retry_delay: int = 0
+
     while True:
+
+        # ── 執行上一輪排定的 delay（在鎖外 sleep，不阻塞 Flask 請求）──
+        if _pending_retry_delay > 0:
+            logger.info(f"[Scheduler] 等待 {_pending_retry_delay}s 後進行下一次訂票...")
+            time.sleep(_pending_retry_delay)
+            _pending_retry_delay = 0
+
         task_to_run = None
         should_sleep = False # 新增旗標，用於在釋放鎖後再睡眠
         
@@ -758,17 +866,44 @@ def run_booking_worker():
                                 pass
 
                         if should_retry:
-                            retry_count += 1
-                            current_task['retry_count'] = retry_count
-                            current_task['last_fail_reason'] = result_msg   # 單獨保存上次失敗原因
-                            current_task['status'] = 'pending'
-                            current_task['message'] = f'準備第 {retry_count} 次重試...'
-                            current_task['update_time'] = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
-                            save_json(TASKS_FILE, booking_tasks)
-                            logger.info(f"任務 {current_running_task_id} 訂票失敗，將進行第 {retry_count} 次重試 (retry_mode={retry_mode})")
-                            current_running_task_id = None
-                            current_cancel_event = None
-                            continue  # 直接進入下一輪 worker 迴圈
+                            # ── [Scheduler] 停止門檻檢查：出發前 N 分鐘內不再重試 ──
+                            departure_dt = parse_departure_dt(current_task.get('data', {}))
+                            if departure_dt and booking_scheduler.should_stop(departure_dt):
+                                stop_mins = booking_scheduler._cfg.get('stop_before_departure_minutes', 5)
+                                result_msg = (
+                                    f'距出發時間不足 {stop_mins} 分鐘，停止搶票。'
+                                    f'（已重試 {retry_count} 次）'
+                                )
+                                logger.info(
+                                    f"[Scheduler] 任務 {current_running_task_id} "
+                                    f"距出發時間太近，不再重試，標記為失敗。"
+                                )
+                                # 不 continue，讓後面的 update_task_status 標記為 failed
+                            else:
+                                # ── 正常重試流程 ──
+                                retry_count += 1
+                                current_task['retry_count'] = retry_count
+                                current_task['last_fail_reason'] = result_msg   # 單獨保存上次失敗原因
+                                current_task['status'] = 'pending'
+                                current_task['message'] = f'準備第 {retry_count} 次重試...'
+                                current_task['update_time'] = datetime.now(CST_TIMEZONE).strftime('%Y/%m/%d %H:%M:%S')
+                                save_json(TASKS_FILE, booking_tasks)
+                                logger.info(f"任務 {current_running_task_id} 訂票失敗，將進行第 {retry_count} 次重試 (retry_mode={retry_mode})")
+
+                                # ── [Scheduler] 計算下一輪的等待秒數（在鎖外執行）──
+                                _pending_retry_delay = (
+                                    booking_scheduler.get_delay_seconds(departure_dt)
+                                    if departure_dt else 60
+                                )
+                                if _pending_retry_delay > 0:
+                                    logger.info(
+                                        f"[Scheduler] 下次重試將等待 {_pending_retry_delay}s "
+                                        f"（{booking_scheduler.describe(departure_dt)}）"
+                                    )
+
+                                current_running_task_id = None
+                                current_cancel_event = None
+                                continue  # 直接進入下一輪 worker 迴圈
                         else:
                             # 不重試，標記為最終失敗
                             if retry_count > 0:
@@ -923,6 +1058,18 @@ def submit_booking():
         train_no = str(data.get('train_no', '') or '').strip()
         train_time = str(data.get('train_time', '') or '').strip()
 
+        # dep_time：前端從 TDX /api/get_trains 回傳的精確出發時間（HH:MM）
+        # radio33 模式下由前端帶入，供 BookingScheduler 計算 delay / stop 使用
+        # 若前端未帶（舊版相容），維持空字串，parse_departure_dt 會 fallback
+        dep_time = str(data.get('dep_time', '') or '').strip()
+        if dep_time:
+            # 正規化為 HH:MM（防禦前端帶來格式不一致）
+            if not re.match(r'^\d{1,2}:\d{2}$', dep_time):
+                dep_time = ''
+            data['dep_time'] = dep_time
+        else:
+            data['dep_time'] = ''
+
         if booking_method == 'radio33':
             if not train_no:
                 return jsonify({
@@ -985,12 +1132,8 @@ def submit_booking():
 @app.route("/api/get_tasks", methods=["GET"])
 @app.route("/api/get_tasks_status", methods=["GET"])
 def get_booking_status():
-    # with lock裡的動作, 盡量不要太久
-    with data_lock:
-        tasks = list(booking_tasks) # 後續用tasks來處理, 就不用佔用booking_tasks太多時間
-
-    # 每次前端請求狀態時，同時執行任務清理邏輯
-    # tasks = load_tasks()
+    # 每次前端請求狀態時，同時執行任務清理邏輯，並取得過濾後的列表
+    tasks = load_tasks()
 
     status_list = []
     for task in tasks:
@@ -1401,11 +1544,17 @@ def history_page():
 # ----------------------------------------------------------------------------
 # 根據日期及起訖站，查詢高鐵班次下拉選單資料。
 # TDX_APP_ID, TDX_APP_KEY 由 config.py 提供 (from config import *)
+#
+# 快取機制（timetable_cache.json）：
+#   key 格式："{date}|{origin}|{destination}"  例："2026-03-28|新竹|台北"
+#   value：trains 陣列（含 dep_time, arr_time, duration_min, has_discount ...）
+#   優先讀取快取；快取 miss 才呼叫 TDX API，成功後寫入快取。
+#   優惠資訊（has_discount）在快取 miss 時一併寫入；快取 hit 時直接返回，不重查。
 # ----------------------------------------------------------------------------
 @app.route('/api/get_trains', methods=['GET'])
 def api_get_trains():
     """
-    查詢高鐵班次下拉選單資料。
+    查詢高鐵班次下拉選單資料（優先讀快取，miss 才呼叫 TDX）。
 
     Query Parameters:
         origin      (str): 出發站名稱，例如 '台北'
@@ -1415,17 +1564,9 @@ def api_get_trains():
     Returns (JSON):
         {
             "status": "success",
-            "trains": [
-                {
-                    "train_no":     "0205",
-                    "dep_time":     "07:51",
-                    "arr_time":     "08:38",
-                    "duration_min": 47,
-                    "label":        "0205, 07:51 - 08:38 (47 min)",
-                    "train_type":   "直達車"
-                },
-                ...
-            ]
+            "source": "cache" | "tdx",
+            "trains": [ { "train_no", "dep_time", "arr_time", "duration_min",
+                          "label", "train_type", "has_discount" }, ... ]
         }
     """
     origin      = request.args.get('origin', '').strip()
@@ -1435,6 +1576,19 @@ def api_get_trains():
     if not origin or not destination or not date:
         return jsonify({'status': 'error', 'message': '缺少必要參數 origin / destination / date'}), 400
 
+    cache_key = f"{date}|{origin}|{destination}"
+
+    # ── 快取讀取 ──
+    try:
+        cache = load_json(TIMETABLE_FILE) or {}
+        if cache_key in cache:
+            cached_trains = cache[cache_key]
+            logger.info(f'[快取 HIT] ({date} {origin}-{destination}) 共 {len(cached_trains)} 班，直接返回快取資料')
+            return jsonify({'status': 'success', 'source': 'cache', 'trains': cached_trains})
+    except Exception as e:
+        logger.warning(f'[快取讀取失敗] {e}，繼續呼叫 TDX API')
+
+    # ── 快取 MISS → 呼叫 TDX API ──
     try:
         trains = get_thsr_timetable_od_by_name(
             app_id=TDX_APP_ID,
@@ -1445,7 +1599,7 @@ def api_get_trains():
         )
 
         train_no_list = [t['train_no'] for t in trains]
-        logger.info(f'({date} {origin}-{destination}) 高鐵班次共有{len(train_no_list)}班: {train_no_list}')
+        logger.info(f'[TDX] ({date} {origin}-{destination}) 高鐵班次共有 {len(train_no_list)} 班: {train_no_list}')
 
         # 查詢大學生優惠，失敗時回傳空 dict，不影響主流程
         discount_map = check_discounts_for_list(
@@ -1455,8 +1609,7 @@ def api_get_trains():
             train_no_list=train_no_list,
             discount_type='大學生',
         )
-        # logger.info(f'大學生優惠票查詢結果 {discount_map}')
-    
+
         # 有優惠的班次在 label 末尾加 ' *'
         for t in trains:
             has_discount = discount_map.get(t['train_no'], False)
@@ -1464,13 +1617,34 @@ def api_get_trains():
             if has_discount:
                 t['label'] = t['label'] + ' *'
 
-        return jsonify({'status': 'success', 'trains': trains})
+        # ── 寫入快取 ──
+        try:
+            cache = load_json(TIMETABLE_FILE) or {}
+            cache[cache_key] = trains
+            save_json(TIMETABLE_FILE, cache)
+            logger.info(f'[快取寫入] key={cache_key}，共 {len(trains)} 班')
+        except Exception as e:
+            logger.warning(f'[快取寫入失敗] {e}')
+
+        return jsonify({'status': 'success', 'source': 'tdx', 'trains': trains})
 
     except ValueError as e:
         return jsonify({'status': 'error', 'message': str(e)}), 400
     except Exception as e:
-        logger.error(f'api_get_trains error: {e}')
-        return jsonify({'status': 'error', 'message': f'查詢失敗: {str(e)}'}), 500
+        err_str = str(e)
+        logger.error(f'api_get_trains error: {err_str}')
+
+        # 網路層錯誤：給前端友善訊息，不噴原始 urllib3 堆疊
+        if 'NameResolutionError' in err_str or 'Failed to resolve' in err_str:
+            msg = 'TDX 班次查詢服務暫時無法連線（DNS 解析失敗），請稍後再試。'
+        elif 'timed out' in err_str.lower() or 'Timeout' in err_str:
+            msg = 'TDX 班次查詢服務回應逾時，請稍後再試。'
+        elif 'ConnectionError' in err_str or 'Max retries exceeded' in err_str:
+            msg = 'TDX 班次查詢服務連線失敗，請確認網路狀態後再試。'
+        else:
+            msg = '班次查詢失敗，請稍後再試。'
+
+        return jsonify({'status': 'error', 'message': msg}), 503
 
 
 # [scott@2026-03-26] 移到這裡！確保 Gunicorn 載入時就會啟動 Worker

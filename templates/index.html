@@ -262,6 +262,7 @@
                             <div class="cdd-list" id="cdd-list"></div>
                         </div>
                         <input type="hidden" name="train_no" id="train-no-value" value="">
+                        <input type="hidden" name="dep_time" id="dep-time-value" value="">
                     </div>
                 </label>
 
@@ -316,7 +317,7 @@
             </table>
         </div>
         <br>
-        <p class="archive-note">💡 已完成任務會在成功 2 天後、失敗/取消任務 60 分鐘後自動從此列表移除並歸檔到歷史紀錄。</p>
+        <p class="archive-note">💡 已完成任務會在成功 1 天後、失敗/取消任務 120 分鐘後自動從此列表移除並歸檔到歷史紀錄。</p>
     </div>
 
 </div>
@@ -381,6 +382,7 @@
                 trainTimeSelect.disabled = false;
                 cddTrigger.disabled = true;
                 document.getElementById('train-no-value').value = '';
+                document.getElementById('dep-time-value').value = '';
                 document.getElementById('cdd-display').innerHTML = '<span style="color:#adb5bd;">— 請先查詢車次 —</span>';
                 document.querySelectorAll('.cdd-item').forEach(i => i.classList.remove('cdd-selected'));
             } else {
@@ -427,6 +429,7 @@
         el.classList.add('cdd-selected');
         document.getElementById('cdd-display').innerHTML = makeTrainHTML(t);
         document.getElementById('train-no-value').value = t.train_no;
+        document.getElementById('dep-time-value').value = t.dep_time || '';  // ← 記錄 TDX 精確出發時間
         document.getElementById('cdd-list').classList.remove('open');
     }
 
@@ -457,6 +460,7 @@
         cddList.innerHTML = '';
         cddTrigger.disabled = true;
         document.getElementById('train-no-value').value = '';
+        document.getElementById('dep-time-value').value = '';
         cddDisplay.innerHTML = '<span style="color:#adb5bd;">查詢中，請稍候…</span>';
 
         try {
@@ -545,7 +549,8 @@
     }
 
     // 更新任務狀態表格邏輯
-    const TWO_DAYS_IN_MS = 2 * 24 * 60 * 60 * 1000;
+    const ONE_DAY_IN_MS    = 1 * 24 * 60 * 60 * 1000;  // 成功任務：1 天後隱藏
+    const TWO_HOURS_IN_MS  = 120 * 60 * 1000;           // 失敗/取消任務：120 分鐘後隱藏
 
     async function fetchTasks() {
         const tbody = document.getElementById('task-table-body');
@@ -588,19 +593,21 @@
                     newActiveTasks = true;
                 }
 
-                // --- 根據 submit_time 過濾超過 2 天的任務 ---
-                const submitTimeStr = task.submit_time;
-                if (submitTimeStr) {
-                    try {
-                        // 'YYYY/MM/DD HH:MM:SS' → ISO 格式以確保跨瀏覽器相容
-                        const isoTimeStr = submitTimeStr.replace(/\//g, '-').replace(' ', 'T');
-                        const submitTimeMs = new Date(isoTimeStr).getTime();
-                        if (nowTime - submitTimeMs > TWO_DAYS_IN_MS) {
-                            console.log(`Task ${task.id} submitted over 2 days ago, skipping display.`);
-                            return; // continue (跳過此筆)
+                // --- 根據狀態與 update_time 決定是否隱藏已完成任務 ---
+                const FINAL_STATUSES = ['booking_success', 'booking_failed', 'task_cancelled', 'task_aborted', 'unknown_result'];
+                if (FINAL_STATUSES.includes(status)) {
+                    const timeStr = task.update_time || task.submit_time;
+                    if (timeStr) {
+                        try {
+                            const isoTimeStr = timeStr.replace(/\//g, '-').replace(' ', 'T');
+                            const elapsedMs  = nowTime - new Date(isoTimeStr).getTime();
+                            const threshold  = (status === 'booking_success') ? ONE_DAY_IN_MS : TWO_HOURS_IN_MS;
+                            if (elapsedMs > threshold) {
+                                return; // 超過門檻，跳過顯示
+                            }
+                        } catch (e) {
+                            console.error('Invalid time format:', timeStr);
                         }
-                    } catch (e) {
-                        console.error('Invalid submit_time format:', submitTimeStr);
                     }
                 }
 
@@ -763,6 +770,7 @@
             travel_date: form.travel_date.value,
             train_time: form.train_time.value,
             train_no: document.getElementById('train-no-value').value,
+            dep_time: document.getElementById('dep-time-value').value,  // ← TDX 精確出發時間
             seat_class: form.seat_class.value,
             seat_option: form.seat_option.value,
             passenger_internal_id: selectedOption.value,

@@ -60,6 +60,10 @@ The program will be developed and tested in the following environments.
 5) Google Cloud VM - Ubuntu 24.04 TLS
    ```
    Linux 6.17.0 + Python 3.12.3 (2026-03-26)
+   # before set timezone: Thu Mar 26 11:43:01 UTC 2026
+   $ sudo timedatectl set-timezone Asia/Taipei  # Set the timezone to Taipei (Taiwan Time)
+   # after set timezone: Thu Mar 26 19:47:33 CST 2026
+
    start Flask server from the Linux system service when VM startup, or
    $ gunicorn --bind 0.0.0.0:8000 app:app
    ```
