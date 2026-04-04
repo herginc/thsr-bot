@@ -308,6 +308,7 @@ def load_tasks():
         retained_tasks = []
         expired_count = 0
         history_list = None
+        history_updated = False
         
         for task in booking_tasks:
             status = task.get('status')
@@ -344,7 +345,7 @@ def load_tasks():
                         history_entry = task.copy()
                         history_entry['result'] = status
                         history_list.append(history_entry)
-                        save_json(HISTORY_FILE, history_list)
+                        history_updated = True
                         logger.info(f"任務 {task['task_id']} 在清理前已自動補歸檔至歷史紀錄。")
                     
                     expired_count += 1
@@ -353,6 +354,9 @@ def load_tasks():
             except Exception as e:
                 logger.warning(f"處理任務 {task.get('task_id')} 清理時發生錯誤: {e}")
                 retained_tasks.append(task)
+
+        if history_updated:
+            save_json(HISTORY_FILE, history_list)
                 
         if expired_count > 0:
             booking_tasks = retained_tasks
@@ -374,17 +378,27 @@ def get_new_task_id() -> str:
     with data_lock:
         today_str = datetime.now(CST_TIMEZONE).strftime('%Y%m%d')
         
-        # 找出最後一筆 task_id
-        last_task_id = booking_tasks[-1]['task_id'] if booking_tasks else None
-        
-        if last_task_id and last_task_id.startswith(today_str):
-            # 與上一筆同一天 → NN + 1
-            last_nn = int(last_task_id.split('-')[1])
-            nn = last_nn + 1
-        else:
-            # 不同天（或沒有任何任務）→ NN 從 00 開始
-            nn = 0
-        
+        # 考慮活躍任務與歷史紀錄，找出今天已使用的最大序號
+        max_nn = -1
+
+        # 1. 檢查活躍任務 (booking_tasks)
+        if booking_tasks:
+            last_active_id = booking_tasks[-1]['task_id']
+            if last_active_id.startswith(today_str):
+                max_nn = max(max_nn, int(last_active_id.split('-')[1]))
+
+        # 2. 檢查歷史紀錄 (history.json)，只看最後一筆
+        history_list = load_json(HISTORY_FILE)
+        if history_list:
+            last_history_id = history_list[-1]['task_id']
+            if last_history_id.startswith(today_str):
+                try:
+                    max_nn = max(max_nn, int(last_history_id.split('-')[1]))
+                except (ValueError, IndexError):
+                    pass # 格式不符則忽略
+
+        # 今天的序號從 max_nn + 1 開始 (若今天尚無任務則 max_nn 為 -1，nn 為 0)
+        nn = max_nn + 1
         return f"{today_str}-{nn:02d}"
 
 # ----------------------------------------------------------------------------
@@ -403,8 +417,6 @@ def get_task_by_id(task_id: str) -> Optional[Dict[str, Any]]:
 # ----------------------------------------------------------------------------
 def update_task_status(task_id: str, new_status: str, message: str):
     global booking_tasks
-
-    logger.info(".........")
 
     with data_lock:
         task = get_task_by_id(task_id)
@@ -1152,10 +1164,11 @@ def submit_booking():
 # ----------------------------------------------------------------------------
 # 路由新增 (Req 3: 動態查詢狀態)
 # ----------------------------------------------------------------------------
-@app.route("/api/status", methods=["GET"])
-@app.route("/api/get_tasks", methods=["GET"])
 @app.route("/api/get_tasks_status", methods=["GET"])
 def get_booking_status():
+
+    print(CYAN + f"[/api/get_tasks_status] {datetime.now().strftime('%H:%M:%S')} ........." + RESET)
+
     # 每次前端請求狀態時，同時執行任務清理邏輯，並取得過濾後的列表
     tasks = load_tasks()
 
@@ -1231,6 +1244,54 @@ def cancel_booking(task_id):
             
         else:
             return jsonify({"status": "error", "message": f"任務 {task_id} 狀態為 '{current_status}'，無法取消。"}), 400
+
+# ----------------------------------------------------------------------------
+# 路由新增: 手動清理已完成任務
+# ----------------------------------------------------------------------------
+@app.route("/api/clear_completed_tasks", methods=["POST"])
+def clear_completed_tasks():
+    """
+    手動清除 tasks.json 中所有非執行中（成功、失敗、取消、放棄等）的任務。
+    """
+    global booking_tasks
+    with data_lock:
+        ACTIVE_STATUSES = ['pending', 'running', 'cancelling']
+        retained_tasks = []
+        removed_count = 0
+        history_list = None
+        history_updated = False
+
+        for task in booking_tasks:
+            status = task.get('status')
+            if status in ACTIVE_STATUSES:
+                retained_tasks.append(task)
+            else:
+                # 確保在移除前已歸檔至歷史紀錄
+                if history_list is None:
+                    history_list = load_json(HISTORY_FILE) or []
+                
+                if not any(h.get('task_id') == task['task_id'] for h in history_list):
+                    history_entry = task.copy()
+                    history_entry['result'] = status
+                    history_list.append(history_entry)
+                    history_updated = True
+                    logger.info(f"任務 {task['task_id']} 在手動清理前已自動補歸檔。")
+                
+                removed_count += 1
+
+        if history_updated:
+            save_json(HISTORY_FILE, history_list)
+
+        if removed_count > 0:
+            booking_tasks = retained_tasks
+            save_json(TASKS_FILE, booking_tasks)
+            logger.info(f"手動清理：已從任務列表中移除 {removed_count} 筆已完成/終止的任務。")
+
+        return jsonify({
+            "status": "success", 
+            "message": f"已成功清理 {removed_count} 筆已完成任務。",
+            "removed_count": removed_count
+        }), 200
 
 # ----------------------------------------------------------------------------
 # 頁面路由

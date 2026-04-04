@@ -40,8 +40,30 @@
         .submit-btn { background: #1565c0; color: #fff; border: none; padding: 0.7rem 1.5rem; border-radius: 5px; cursor: pointer; font-size: 1rem; transition: background 0.3s; font-weight: bold; height: 45px; min-width: 120px; }
         .submit-btn:hover { background: #0d47a1; }
 
-        .secondary-btn { background: #607d8b; color: #fff; border: none; padding: 0.6rem 1.2rem; border-radius: 5px; cursor: pointer; font-size: 0.9rem; transition: background 0.3s; height: 40px; white-space: nowrap; font-weight: bold; }
-        .secondary-btn:hover { background: #455a64; }
+        /* .secondary-btn { background: #2e7d32; color: #fff; border: none; padding: 0.6rem 1.2rem; border-radius: 5px; cursor: pointer; font-size: 0.9rem; transition: background 0.3s; height: 40px; white-space: nowrap; font-weight: bold; }
+        .secondary-btn:hover { background: #1b5e20; } */
+
+        .secondary-btn {
+            background: #2e7d32;
+            color: #fff;
+            border: none;
+            padding: 0 1.2rem;          /* 只保留左右內距，移除上下內距 */
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: background 0.3s;
+            height: 40px;
+            white-space: nowrap;
+            font-weight: bold;
+
+            /* 垂直居中關鍵 */
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .secondary-btn:hover {
+            background: #1b5e20;
+        }        
 
         /* 表格響應式 - 欄位變多，增加最小寬度 */
         .table-container { width: 100%; overflow-x: auto; margin-top: 1rem; border: 1px solid #eee; border-radius: 5px; }
@@ -295,7 +317,11 @@
             </div>
         </form>
 
-        <h3>訂票任務狀態</h3>
+        <!-- <h3>訂票任務狀態</h3> -->
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top: 2rem; border-bottom: 2px solid #e3f2fd; padding-bottom: 0.5rem; margin-bottom: 1rem;">
+            <h3 style="margin:0; border:none; padding:0;">訂票任務狀態</h3>
+            <button type="button" class="secondary-btn" style="height:35px; font-size:0.85rem;" onclick="clearCompletedTasks()">清理已完成任務</button>
+        </div>
         
         <div class="table-container">
             <table id="task-table">
@@ -333,10 +359,11 @@
         return new URL(path, origin).href;
     }
 
-    const API_TASKS_URL = getApiUrl('/api/get_tasks');
-    const API_SUBMIT_URL = getApiUrl('/api/submit_task');
-    const API_PASSENGERS_URL = getApiUrl('/api/get_passengers');
-    const API_CANCEL_URL = getApiUrl('/api/cancel_task');
+    const API_PASSENGERS_URL    = getApiUrl('/api/get_passengers');
+    const API_SUBMIT_URL        = getApiUrl('/api/submit_task');
+    const API_CANCEL_URL        = getApiUrl('/api/cancel_task');
+    const API_CLEAR_URL         = getApiUrl('/api/clear_completed_tasks');
+    const API_TASKS_STATUS_URL  = getApiUrl('/api/get_tasks_status');
 
     let statusTimer = null;
 
@@ -557,7 +584,7 @@
         if (!tbody) return;
 
         try {
-            const res = await fetch(API_TASKS_URL);
+            const res = await fetch(API_TASKS_STATUS_URL);
             if (!res.ok) throw new Error('API 回傳失敗');
             const json = await res.json();
 
@@ -722,6 +749,24 @@
             fetchTasks();
         } catch (e) {
             console.error('取消任務失敗:', e);
+        }
+    }
+
+    // 清理已完成任務
+    async function clearCompletedTasks() {
+        try {
+            const res = await fetch(API_CLEAR_URL, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            });
+            const result = await res.json();
+            if(result.status === 'success') {
+                fetchTasks();
+            } else {
+                alert('清理失敗: ' + (result.message || '未知錯誤'));
+            }
+        } catch (e) {
+            console.error('清理任務失敗:', e);
         }
     }
 
