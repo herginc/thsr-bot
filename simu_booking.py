@@ -76,7 +76,7 @@ logging.basicConfig(level=logging.INFO, format=FORMAT)
 #     'unknown_result'  (不明原因)
 # ----------------------------------------------------------------------------
 
-def thsr_run_booking_flow_with_data(
+def thsr_run_booking_flow_simulation(
     task_id: str, 
     task_data: Dict[str, Any], 
     cancel_event: threading.Event,
@@ -110,7 +110,7 @@ def thsr_run_booking_flow_with_data(
             raise Exception("使用者放棄即將開始的訂票任務")
 
         # 1. 初始化 Session
-        if random.random() < 0.3: # 模擬 30% 成功率
+        if random.random() < 0.05: # 模擬 5% 成功率
             session = None
         else:
             session = session_init()
@@ -140,14 +140,14 @@ def thsr_run_booking_flow_with_data(
             elif step == 7: 
                 result_message = "等待系統回應訂位代號..."
             elif step == total_steps:
-                if random.random() > 0.4: # 模擬 60% 成功率
+                if random.random() < 0.1: # 模擬 10% 成功率
                     final_status = 'booking_success'
                     code = ''.join(random.choices('ABCDEFGHJKLMNPQRSTUVWXYZ123456789', k=6)) 
-                    result_message = f"訂位代號: {code}"  # 訂票成功
+                    result_message = f"訂票成功，訂位代號: {code}"  # 訂票成功
                 else:
-                    result_message = "列車滿座或系統錯誤。" # 訂票失敗
+                    result_message = "班車滿座，訂票失敗" # 訂票失敗
             else:
-                result_message = f"模擬網路請求及資料處理..."
+                result_message = f"(模擬)網路請求及資料處理..."
 
             # [scott@2026-03-12] update status
             status_updater(task_id, 'running', f"步驟 {step}/{total_steps}: (延遲 {step_delay:.2f}s) {result_message}")
@@ -219,7 +219,7 @@ def main():
         print(f"\n--- Running Booking Flow, Run {n}/{max_run} ---")
         
         # 呼叫核心訂票流程
-        success, result_msg = thsr_run_booking_flow_with_data(
+        success, result_msg = thsr_run_booking_flow_simulation(
             task_id=f"{task_id}-{n}", # 每次運行給予不同 ID
             task_data=mock_task_data,
             cancel_event=cancel_event,

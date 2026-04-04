@@ -1,5 +1,37 @@
 import os
 
+
+# ----------------------------------------------------------------------------
+# ANSI Escape Codes
+# ----------------------------------------------------------------------------
+
+# Define ANSI escape codes for colors and reset
+
+BOLD    = '\033[1m'
+
+RED     = '\x1b[91m'
+GREEN   = '\x1b[92m'
+YELLOW  = '\x1b[93m'
+BLUE    = '\x1b[94m'
+MAGENTA = '\x1b[95m'
+CYAN    = '\x1b[96m'
+WHITE   = '\x1b[97m'
+RESET   = '\x1b[0m'     # Resets color and styling
+
+# if sys.platform == "win32":
+if os.name == 'nt':
+    import colorama
+    colorama.init()
+
+print(RED       + "Hello, color text ..." + RESET)
+print(GREEN     + "Hello, color text ..." + RESET)
+print(YELLOW    + "Hello, color text ..." + RESET)
+print(BLUE      + "Hello, color text ..." + RESET)
+print(MAGENTA   + "Hello, color text ..." + RESET)
+print(CYAN      + "Hello, color text ..." + RESET)
+print(WHITE     + "Hello, color text ..." + RESET)
+
+
 # ----------------------------------------------------------------------------
 # Define URLs
 # ----------------------------------------------------------------------------
@@ -180,38 +212,25 @@ TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
 TWILIO_AUTH_TOKEN  = os.environ.get('TWILIO_AUTH_TOKEN', '')
 
 # ----------------------------------------------------------------------------
+# Check Environment Variables
+# ----------------------------------------------------------------------------
+env_vars_to_check = {
+    "TDX_APP_ID": TDX_APP_ID,
+    "TDX_APP_KEY": TDX_APP_KEY,
+    "NOTIFY_SENDER_EMAIL": NOTIFY_SENDER_EMAIL,
+    "NOTIFY_SENDER_PASSWORD": NOTIFY_SENDER_PASSWORD,
+    "LINE_CHANNEL_ACCESS_TOKEN": CHANNEL_ACCESS_TOKEN,
+    "TWILIO_ACCOUNT_SID": TWILIO_ACCOUNT_SID,
+    "TWILIO_AUTH_TOKEN": TWILIO_AUTH_TOKEN,
+}
+
+for var_name, value in env_vars_to_check.items():
+    if not value:
+        print(f"{RED}[Warning] Environment variable '{var_name}' is not set!{RESET}")
+
+# ----------------------------------------------------------------------------
 # Advanced Configuration
 # ----------------------------------------------------------------------------
 
 SAVE_BOOKING_PAGE = 1
 
-
-# ----------------------------------------------------------------------------
-# ANSI Escape Codes
-# ----------------------------------------------------------------------------
-
-# Define ANSI escape codes for colors and reset
-
-BOLD    = '\033[1m'
-
-RED     = '\x1b[91m'
-GREEN   = '\x1b[92m'
-YELLOW  = '\x1b[93m'
-BLUE    = '\x1b[94m'
-MAGENTA = '\x1b[95m'
-CYAN    = '\x1b[96m'
-WHITE   = '\x1b[97m'
-RESET   = '\x1b[0m'     # Resets color and styling
-
-# if sys.platform == "win32":
-if os.name == 'nt':
-    import colorama
-    colorama.init()
-
-print(RED       + "Hello, color text ..." + RESET)
-print(GREEN     + "Hello, color text ..." + RESET)
-print(YELLOW    + "Hello, color text ..." + RESET)
-print(BLUE      + "Hello, color text ..." + RESET)
-print(MAGENTA   + "Hello, color text ..." + RESET)
-print(CYAN      + "Hello, color text ..." + RESET)
-print(WHITE     + "Hello, color text ..." + RESET)

@@ -27,6 +27,7 @@ import logging
 import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
+from config import *
 
 try:
     import yaml
@@ -111,9 +112,11 @@ class BookingScheduler:
 
         if minutes_left <= stop_threshold:
             logger.info(
+                YELLOW +
                 f"[BookingScheduler] 出發時間={departure_dt.strftime('%Y/%m/%d %H:%M')} "
                 f"距出發剩餘 {minutes_left:.1f} 分鐘 "
                 f"≤ 停止門檻 {stop_threshold} 分鐘 → 停止訂票"
+                + RESET
             )
             return True
         return False

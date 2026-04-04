@@ -24,8 +24,8 @@ from argparse import ArgumentParser
 from werkzeug.middleware.proxy_fix import ProxyFix
 from flask import Flask, request, abort, render_template, jsonify, redirect, session
 
-import booking
-import proxy
+import simu_booking
+import thsr_booking
 from config import *
 from tdx_api import get_thsr_timetable_od_by_name
 from stmp_sms import send_email, send_LINE_message
@@ -37,16 +37,17 @@ from booking_schedule import BookingScheduler, parse_departure_dt
 
 # ----------------------------------------------------------------------------
 # 訂票模式切換
-# True  → 使用 booking.thsr_run_booking_flow_with_data (模擬版本，用於開發/測試)
-# False → 使用 proxy.thsr_run_booking_flow             (真實版本，連接高鐵官網)
+# True  → 使用 simu_booking.py      (模擬版本，用於開發/測試)
+# False → 使用 thsr_booking.py      (真實版本，連接高鐵官網)
 # ----------------------------------------------------------------------------
 USE_MOCK_BOOKING = True
 # USE_MOCK_BOOKING = False
 
+SEND_BOOKING_INFO = True
 
-# ----------------------------------------------------------------------------
-# 
-# ----------------------------------------------------------------------------
+if (USE_MOCK_BOOKING == True):
+    SEND_BOOKING_INFO = False
+
 
 # 'with lock' guideline:
 # < 10 行
@@ -126,6 +127,7 @@ data_lock = threading.RLock()
 booking_thread: Optional[threading.Thread] = None
 current_running_task_id: Optional[str] = None
 current_cancel_event: Optional[threading.Event] = None
+last_cache_cleanup_date: Optional[datetime.date] = None
 
 # 載入上次的任務，並將所有 'running' 或 'cancelling' 狀態重設為 'failed'
 booking_tasks: List[Dict[str, Any]] = load_json(TASKS_FILE) 
@@ -612,7 +614,18 @@ def send_thsr_booking_information(task_data: dict, result_msg: str):
         start_station, end_station, travel_date, train_no,
         train_time, dep_time (radio33 模式的精確出發時間)
     result_msg 預期包含：
-        '訂位代號: XXXXXXXX' (由 proxy.thsr_run_booking_flow 回傳)
+        '訂位代號: XXXXXXXX' (由 thsr_booking_flow 回傳)
+        '座位: XXX' (由 thsr_booking_flow 回傳)
+        '票價: XXX' (由 thsr_booking_flow 回傳)
+        '付款期限: XXX' (由 thsr_booking_flow 回傳)
+        '高鐵車次: XXX' (由 thsr_booking_flow 回傳)
+        '高鐵座位: XXX' (由 thsr_booking_flow 回傳)
+        '到達時間: XXX' (由 thsr_booking_flow 回傳)
+        '出發時間: XXX' (由 thsr_booking_flow 回傳)
+        '身份字號: XXX' (由 thsr_booking_flow 回傳)
+        '訂位日期: XXX' (由 thsr_booking_flow 回傳)
+        '付款金額: XXX' (由 thsr_booking_flow 回傳)
+        '訂位時間: XXX' (由 thsr_booking_flow 回傳)
     """
     try:
         # --- 從 task_data 取得基本資訊 ---
@@ -799,12 +812,12 @@ def run_booking_worker():
             result_msg = ""
             try:
                 # 根據 USE_MOCK_BOOKING 旗標選擇訂票實作：
-                #   True  → booking.thsr_run_booking_flow_with_data (模擬版本)
-                #   False → proxy.thsr_run_booking_flow             (真實版本)
+                #   True  → simu_booking.thsr_run_booking_flow_simulation (模擬版本)
+                #   False → thsr_booking.thsr_run_booking_flow            (真實版本)
                 booking_fn = (
-                    booking.thsr_run_booking_flow_with_data
+                    simu_booking.thsr_run_booking_flow_simulation
                     if USE_MOCK_BOOKING
-                    else proxy.thsr_run_booking_flow
+                    else thsr_booking.thsr_run_booking_flow
                 )
 
                 final_status, result_msg = booking_fn(
@@ -919,12 +932,13 @@ def run_booking_worker():
                             booking_code = match.group(1)
                             current_task['booking_code'] = booking_code # <--- **新增這行**
                     
-                        # 發送 Email / LINE 訂票成功通知
-                        threading.Thread(
-                            target=send_thsr_booking_information,
-                            args=(task_to_run['data'], result_msg),
-                            daemon=True
-                        ).start()
+                        if (SEND_BOOKING_INFO == True):
+                            # 發送 Email / LINE 訂票成功通知
+                            threading.Thread(
+                                target=send_thsr_booking_information,
+                                args=(task_to_run['data'], result_msg),
+                                daemon=True
+                            ).start()
                     
                     update_task_status(current_running_task_id, final_status, result_msg)
 
@@ -1013,13 +1027,13 @@ def submit_booking():
         data['identity'] = passenger_info.get('identity')
         # --- END: 新增的安全性查找邏輯 ---
 
-        # --- START: 欄位正規化 (前端傳入值 → proxy.py 所需格式) ---
+        # --- START: 欄位正規化 (前端傳入值 → thsr_booking.py 所需格式) ---
 
         # 5a. travel_date: 統一轉為 'YYYY/MM/DD' (相容 'YYYY-MM-DD' 或已是 'YYYY/MM/DD')
         raw_date = data.get('travel_date', '')
         data['travel_date'] = raw_date.replace('-', '/')
 
-        # 5b. identity: 中文票種 → proxy.py IDENTITY_TO_TICKET_ROW key
+        # 5b. identity: 中文票種 → thsr_booking.py IDENTITY_TO_TICKET_ROW key
         IDENTITY_ZH_TO_EN = {
             '一般':   'adult',
             '孩童':   'child',
@@ -1032,7 +1046,7 @@ def submit_booking():
         data['identity'] = IDENTITY_ZH_TO_EN.get(raw_identity, 'adult')
 
         # 5c. seat_class: 中文車廂種類 → class_type 整數
-        #     對應 proxy.py trainCon:trainRadioGroup: 0=標準, 1=商務, 2=自由座
+        #     對應 thsr_booking.py trainCon:trainRadioGroup: 0=標準, 1=商務, 2=自由座
         SEAT_CLASS_ZH_TO_INT = {
             '標準車廂': 0,
             '商務車廂': 1,
@@ -1042,7 +1056,7 @@ def submit_booking():
         data['class_type'] = SEAT_CLASS_ZH_TO_INT.get(raw_seat_class, 0)
 
         # 5d. seat_option: 中文座位喜好 → seat_prefer 整數
-        #     對應 proxy.py seatCon:seatRadioGroup: 0=無, 1=靠窗, 2=走道
+        #     對應 thsr_booking.py seatCon:seatRadioGroup: 0=無, 1=靠窗, 2=走道
         SEAT_OPTION_ZH_TO_INT = {
             '無座位偏好': 0,
             '靠窗優先':   1,
@@ -1088,6 +1102,16 @@ def submit_booking():
                     "message": "train_time 格式錯誤，請使用 HH:MM（例如 09:00）。"
                 }), 400
         # --- END: 必填欄位驗證 ---
+
+        # --- START: 檢查是否已過期或即將到期 ---
+        departure_dt = parse_departure_dt(data)
+        if departure_dt and booking_scheduler.should_stop(departure_dt):
+            stop_mins = booking_scheduler._cfg.get('stop_before_departure_minutes', 5)
+            return jsonify({
+                "status": "error", 
+                "message": f"該班次已過期或距離出發時間不足 {stop_mins} 分鐘，無法受理訂票。"
+            }), 400
+        # --- END: 檢查是否已過期或即將到期 ---
 
         task_id = get_new_task_id()
 
@@ -1540,6 +1564,46 @@ def history_page():
     # 假設 history.json 中的每個項目已經包含所需的鍵
     # 為了簡化，這裡僅傳遞 history 列表
     return render_template("history.html", history=history if history else [])
+
+# ----------------------------------------------------------------------------
+# 清理過期的時刻表快取（以天為單位）
+# ----------------------------------------------------------------------------
+def cleanup_timetable_cache():
+    """
+    檢查並移除 timetable_cache.json 中日期早於今天的資料。
+    每天僅會執行一次完整掃描。
+    """
+    global last_cache_cleanup_date
+    today = datetime.now(CST_TIMEZONE).date()
+
+    if last_cache_cleanup_date == today:
+        return
+
+    with data_lock:
+        cache = load_json(TIMETABLE_FILE)
+        if not cache or not isinstance(cache, dict):
+            last_cache_cleanup_date = today
+            return
+
+        new_cache = {}
+        removed_count = 0
+        for k, v in cache.items():
+            try:
+                # key 格式："{date}|{origin}|{destination}"，例如 "2026-03-28|台北|左營"
+                date_str = k.split('|')[0]
+                cache_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                if cache_date >= today:
+                    new_cache[k] = v
+                else:
+                    removed_count += 1
+            except (ValueError, IndexError):
+                removed_count += 1
+
+        if removed_count > 0:
+            save_json(TIMETABLE_FILE, new_cache)
+            logger.info(f"[Cache Cleanup] 已從快取中移除 {removed_count} 筆過期班次資料。")
+
+        last_cache_cleanup_date = today
     
 # ----------------------------------------------------------------------------
 # 根據日期及起訖站，查詢高鐵班次下拉選單資料。
@@ -1575,6 +1639,9 @@ def api_get_trains():
 
     if not origin or not destination or not date:
         return jsonify({'status': 'error', 'message': '缺少必要參數 origin / destination / date'}), 400
+
+    # 執行每日快取清理
+    cleanup_timetable_cache()
 
     cache_key = f"{date}|{origin}|{destination}"
 

@@ -10,3 +10,5 @@ sample_code/
 *.backup
 *.tar.gz
 setenv.sh
+diff.txt
+changes.diff
