@@ -579,9 +579,17 @@
     const ONE_DAY_IN_MS    = 1 * 24 * 60 * 60 * 1000;  // 成功任務：1 天後隱藏
     const TWO_HOURS_IN_MS  = 120 * 60 * 1000;           // 失敗/取消任務：120 分鐘後隱藏
 
+    // 判斷目前是否應該執行 fetch（頁面可見 + 非背景 + active tab）
+    function isPageVisible() {
+        return document.visibilityState === 'visible';
+    }
+
     async function fetchTasks() {
         const tbody = document.getElementById('task-table-body');
         if (!tbody) return;
+
+        // 若 browser 在背景、被遮住、或 tab 不在此頁面，就跳過本次 fetch
+        if (!isPageVisible()) return;
 
         try {
             const res = await fetch(API_TASKS_STATUS_URL);
@@ -621,22 +629,23 @@
                 }
 
                 // --- 根據狀態與 update_time 決定是否隱藏已完成任務 ---
-                const FINAL_STATUSES = ['booking_success', 'booking_failed', 'task_cancelled', 'task_aborted', 'unknown_result'];
-                if (FINAL_STATUSES.includes(status)) {
-                    const timeStr = task.update_time || task.submit_time;
-                    if (timeStr) {
-                        try {
-                            const isoTimeStr = timeStr.replace(/\//g, '-').replace(' ', 'T');
-                            const elapsedMs  = nowTime - new Date(isoTimeStr).getTime();
-                            const threshold  = (status === 'booking_success') ? ONE_DAY_IN_MS : TWO_HOURS_IN_MS;
-                            if (elapsedMs > threshold) {
-                                return; // 超過門檻，跳過顯示
-                            }
-                        } catch (e) {
-                            console.error('Invalid time format:', timeStr);
-                        }
-                    }
-                }
+                // [scott@2025-04-05] Frontend 不需決定是否隱藏已完成任務，由Backend API 根據時間自動過濾，這裡僅提供前端顯示邏輯（如有需要可再加上前端過濾）
+                // const FINAL_STATUSES = ['booking_success', 'booking_failed', 'task_cancelled', 'task_aborted', 'unknown_result'];
+                // if (FINAL_STATUSES.includes(status)) {
+                //     const timeStr = task.update_time || task.submit_time;
+                //     if (timeStr) {
+                //         try {
+                //             const isoTimeStr = timeStr.replace(/\//g, '-').replace(' ', 'T');
+                //             const elapsedMs  = nowTime - new Date(isoTimeStr).getTime();
+                //             const threshold  = (status === 'booking_success') ? ONE_DAY_IN_MS : TWO_HOURS_IN_MS;
+                //             if (elapsedMs > threshold) {
+                //                 return; // 超過門檻，跳過顯示
+                //             }
+                //         } catch (e) {
+                //             console.error('Invalid time format:', timeStr);
+                //         }
+                //     }
+                // }
 
                 // --- 狀態中文標籤 ---
                 const retryCount = task.retry_count || 0;
