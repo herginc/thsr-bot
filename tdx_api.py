@@ -13,7 +13,15 @@ tdx_api.py - TDX 交通資料平台 API 封裝模組
         train_date='2026-03-20',
     )
     for t in trains:
-        print(t['train_no'], t['dep_time'], t['arr_time'], t['duration_min'])
+        print(t['train_no'], t['dep_time'], t['arr_time'])
+
+[scott@2026-04-06] 由 front-end client 直接呼叫 OData查詢，不需要先取得 token 再呼叫 API，因為 OData URL 已經包含了 token 參數。如此可節省back-end server的流量負擔，讓前端直接與TDX API溝通。
+    支援OData查詢 https://tdx.transportdata.tw/api/basic/v2/Rail/THSR/DailyTimetable/OD/{OriginStationID}/to/{DestinationStationID}/{TrainDate} 
+    https://tdx.transportdata.tw/api/basic/v2/Rail/THSR/DailyTimetable/OD/1030/to/1000/2026-04-27
+
+    reference: https://tdx.transportdata.tw/data-service/basic  指定[日期]高鐵所有車次之時刻表資料 v2
+    reference: https://tdx.transportdata.tw/api-service/swagger/basic/268fc230-2e04-471b-a728-a726167c1cfc#/THSR/THSRApi_ODDailyTimetable_2126
+    reference: https://github.com/LinYenCheng/thsr-app        
 """
 
 import requests
@@ -125,35 +133,6 @@ def _fetch_thsr_timetable_raw(
 
 
 # ----------------------------------------------------------------------------
-# 計算行車時間 (分鐘)
-# ----------------------------------------------------------------------------
-
-def _calc_duration_min(dep_time: str, arr_time: str) -> Optional[int]:
-    """
-    計算出發到到達的分鐘數。
-
-    Args:
-        dep_time: 'HH:MM'
-        arr_time: 'HH:MM'
-
-    Returns:
-        分鐘數 (int)，或 None（解析失敗）
-    """
-    try:
-        fmt = '%H:%M'
-        dep = datetime.strptime(dep_time, fmt)
-        arr = datetime.strptime(arr_time, fmt)
-        delta = arr - dep
-        if delta.total_seconds() < 0:
-            delta_seconds = delta.total_seconds() + 86400
-        else:
-            delta_seconds = delta.total_seconds()
-        return int(delta_seconds // 60)
-    except Exception:
-        return None
-
-
-# ----------------------------------------------------------------------------
 # 主要公開函式
 # ----------------------------------------------------------------------------
 
@@ -180,9 +159,6 @@ def get_thsr_timetable_od(
             'train_no':     '0205',        # 車次
             'dep_time':     '07:51',       # 出發時間 HH:MM
             'arr_time':     '08:38',       # 到達時間 HH:MM
-            'duration_min': 47,            # 行車時間 (分鐘)
-            'label':        '0205, 07:51 - 08:38 (47 min)',  # 下拉選單用標籤
-            'train_type':   '直達車',       # 車種
         }
         依出發時間升序排列。
 
@@ -196,29 +172,20 @@ def get_thsr_timetable_od(
     for train in raw_trains:
         info       = train.get('DailyTrainInfo', {})
         train_no   = info.get('TrainNo', '')
-        train_type = info.get('TrainTypeName', {}).get('Zh_tw', '')
         dep_time   = train.get('OriginStopTime', {}).get('DepartureTime', '')
         arr_time   = train.get('DestinationStopTime', {}).get('ArrivalTime', '')
-
+  
         if not train_no or not dep_time or not arr_time:
             continue
-
-        duration_min = _calc_duration_min(dep_time, arr_time)
-        duration_str = f'{duration_min}min' if duration_min is not None else '?'
-
-        label = f'{train_no} {dep_time}-{arr_time} ({duration_str})'
 
         result.append({
             'train_no':     train_no,
             'dep_time':     dep_time,
             'arr_time':     arr_time,
-            'duration_min': duration_min,
-            'label':        label,
-            'train_type':   train_type,
         })
 
     # 依出發時間排序
-    result.sort(key=lambda x: x['dep_time'])
+    # result.sort(key=lambda x: x['dep_time'])
     return result
 
 

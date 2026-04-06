@@ -2,7 +2,12 @@
 
 Use Python [Flask](http://flask.pocoo.org/) to parse HTTP POST messages from a browser or line-bot (webhook) and process them.
 
-Keywords: [Flask](http://flask.pocoo.org/), [Flask Source](https://github.com/pallets/flask)
+Supports multiple sessions across different front-end clients — web browser and LINE bot with natural language interaction.
+
+(TOBE) Supports concurrent multi-ticket booking (multi-threaded via Uvicorn + FastAPI)
+
+Keywords: [Flask](http://flask.pocoo.org/), [FastAPI](https://fastapi.tiangolo.com/), [Gunicorn](https://github.com/benoitc/gunicorn), [Uvicorn](https://github.com/encode/uvicorn)
+
 
 
 ## <span style="color:yellow;">My environments</span>
@@ -10,7 +15,6 @@ Keywords: [Flask](http://flask.pocoo.org/), [Flask Source](https://github.com/pa
 The program will be developed and tested in the following environments.
 
 ### Back-End Server:
-
 1) Microsoft Windows 7 (for local development purpose)
    - support local browser only
    ```

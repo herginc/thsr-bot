@@ -40,11 +40,17 @@ from booking_schedule import BookingScheduler, parse_departure_dt
 # True  → 使用 simu_booking.py      (模擬版本，用於開發/測試)
 # False → 使用 thsr_booking.py      (真實版本，連接高鐵官網)
 # ----------------------------------------------------------------------------
-USE_MOCK_BOOKING = True
-# USE_MOCK_BOOKING = False
+# USE_MOCK_BOOKING = True         ＃開發/測試階段，使用模擬版本 (不連接高鐵官網)
+# USE_MOCK_BOOKING = False        ＃真正部署時，使用真實版本 (連接高鐵官網)
 
+USE_MOCK_BOOKING = True
+
+#
+# SEND_BOOKING_INFO 變數控制是否在訂票成功後發送 Email 和 LINE 通知。
+#
 SEND_BOOKING_INFO = True
 
+# 在模擬訂票模式下，為了避免誤發通知，強制將 SEND_BOOKING_INFO 設為 False。
 if (USE_MOCK_BOOKING == True):
     SEND_BOOKING_INFO = False
 
@@ -1677,7 +1683,7 @@ def cleanup_timetable_cache():
 #
 # 快取機制（timetable_cache.json）：
 #   key 格式："{date}|{origin}|{destination}"  例："2026-03-28|新竹|台北"
-#   value：trains 陣列（含 dep_time, arr_time, duration_min, has_discount ...）
+#   value：trains 陣列（含 dep_time, arr_time, has_discount ...）
 #   優先讀取快取；快取 miss 才呼叫 TDX API，成功後寫入快取。
 #   優惠資訊（has_discount）在快取 miss 時一併寫入；快取 hit 時直接返回，不重查。
 # ----------------------------------------------------------------------------
@@ -1695,8 +1701,7 @@ def api_get_trains():
         {
             "status": "success",
             "source": "cache" | "tdx",
-            "trains": [ { "train_no", "dep_time", "arr_time", "duration_min",
-                          "label", "train_type", "has_discount" }, ... ]
+            "trains": [ { "train_no", "dep_time", "arr_time", "has_discount" }, ... ]
         }
     """
     origin      = request.args.get('origin', '').strip()
@@ -1743,12 +1748,10 @@ def api_get_trains():
             discount_type='大學生',
         )
 
-        # 有優惠的班次在 label 末尾加 ' *'
+        # 將優惠資訊合併到班次資料中（若有）
         for t in trains:
             has_discount = discount_map.get(t['train_no'], False)
             t['has_discount'] = has_discount
-            if has_discount:
-                t['label'] = t['label'] + ' *'
 
         # ── 寫入快取 ──
         try:

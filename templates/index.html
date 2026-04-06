@@ -343,7 +343,7 @@
             </table>
         </div>
         <br>
-        <p class="archive-note">💡 已完成任務會在成功 1 天後、失敗/取消任務 120 分鐘後自動從此列表移除並歸檔到歷史紀錄。</p>
+        <p class="archive-note">💡 訂票成功任務最多保留1天、其他已完成任務 (失敗/取消/不明/...) 最多保留2小時。</p>
     </div>
 
 </div>
@@ -385,14 +385,22 @@
     }
 
     // 起訖站互換
+    // 共用 debounce timer（swapStations 與 initAutoTrainLoad 共用同一個）
+    let _debounceTimer = null;
+    function debouncedLoadTrainOptions() {
+        const method = document.querySelector('input[name="bookingMethod"]:checked');
+        if (!method || method.value !== 'radio33') return;
+        clearTimeout(_debounceTimer);
+        _debounceTimer = setTimeout(loadTrainOptions, 1000);
+    }
+
     function swapStations() {
         const startSelect = document.querySelector('select[name="start_station"]');
         const destSelect = document.querySelector('select[name="end_station"]');
         const temp = startSelect.value;
         startSelect.value = destSelect.value;
         destSelect.value = temp;
-        const method = document.querySelector('input[name="bookingMethod"]:checked');
-        if (method && method.value === 'radio33') loadTrainOptions();
+        debouncedLoadTrainOptions();
     }
 
     // 搜尋方式與輸入框連動
@@ -422,30 +430,38 @@
         updateInputs();
     }
 
-    // 自動觸發查詢：乘車日期、出發站、到達站任一變動時
+    // 自動觸發查詢：乘車日期、出發站、到達站任一變動時（debounce 1000ms，避免連續操作重複發 request）
     function initAutoTrainLoad() {
         const dateInput = document.getElementById('travel-date-input');
         const startSel  = document.querySelector('select[name="start_station"]');
         const endSel    = document.querySelector('select[name="end_station"]');
 
-        function onTrigger() {
-            const method = document.querySelector('input[name="bookingMethod"]:checked');
-            if (method && method.value === 'radio33') loadTrainOptions();
-        }
-        dateInput.addEventListener('change', onTrigger);
-        startSel.addEventListener('change', onTrigger);
-        endSel.addEventListener('change', onTrigger);
+        dateInput.addEventListener('change', debouncedLoadTrainOptions);
+        startSel.addEventListener('change', debouncedLoadTrainOptions);
+        endSel.addEventListener('change', debouncedLoadTrainOptions);
     }
 
     // -----------------------------------------------------------------------
     // 自訂車次下拉元件
     // -----------------------------------------------------------------------
-    function makeTrainHTML(t) {
+    function makeTrainHTML_org(t) {
         const prefix = t.has_discount
             ? `<span class="t-discount">* </span>`
             : `<span class="t-pad">* </span>`;
         return `${prefix}<span class="t-no">${t.train_no}</span><span class="t-sep">, </span><span class="t-time">${t.dep_time}-${t.arr_time}</span><span class="t-sep"> </span><span class="t-dur">(${t.duration_min}分)</span>`;
     }
+
+    function makeTrainHTML(t) {
+        const prefix = t.has_discount
+            ? `<span class="t-discount">* </span>`
+            : `<span class="t-pad">* </span>`;
+
+        const [depH, depM] = t.dep_time.split(':').map(Number);
+        const [arrH, arrM] = t.arr_time.split(':').map(Number);
+        const duration_min = (arrH * 60 + arrM) - (depH * 60 + depM);
+
+    return `${prefix}<span class="t-no">${t.train_no}</span><span class="t-sep">, </span><span class="t-time">${t.dep_time}-${t.arr_time}</span><span class="t-sep"> </span><span class="t-dur">(${duration_min}分)</span>`;
+}
 
     function cddToggle() {
         document.getElementById('cdd-list').classList.toggle('open');
@@ -474,6 +490,25 @@
     // -----------------------------------------------------------------------
     // 車次查詢：呼叫後端 /api/get_trains，全部班次直接顯示
     // -----------------------------------------------------------------------
+    const _trainCache = new Map(); // key: "起站|訖站|日期"
+
+    function _renderTrainOptions(json, cddList, cddTrigger, cddDisplay) {
+        if (json.status !== 'success' || !Array.isArray(json.trains) || json.trains.length === 0) {
+            cddDisplay.innerHTML = '<span style="color:#adb5bd;">查無班次，請確認日期及站別</span>';
+            cddTrigger.disabled = false;
+            return;
+        }
+        json.trains.forEach(t => {
+            const div = document.createElement('div');
+            div.className = 'cdd-item';
+            div.innerHTML = makeTrainHTML(t);
+            div.addEventListener('click', () => cddSelectTrain(t, div));
+            cddList.appendChild(div);
+        });
+        cddTrigger.disabled = false;
+        const _d = document.getElementById("travel-date-input").value; const _md = _d ? _d.slice(5).replace("-", "/") : ""; cddDisplay.innerHTML = `<span style="color:#333;">— 請選擇${_md}車次（共${json.trains.length}班）—</span>`;
+    }
+
     async function loadTrainOptions() {
         const startStation = document.querySelector('select[name="start_station"]').value;
         const endStation   = document.querySelector('select[name="end_station"]').value;
@@ -488,6 +523,14 @@
         cddTrigger.disabled = true;
         document.getElementById('train-no-value').value = '';
         document.getElementById('dep-time-value').value = '';
+
+        // --- cache 命中：直接用，不發 request ---
+        const cacheKey = `${startStation}|${endStation}|${travelDate}`;
+        if (_trainCache.has(cacheKey)) {
+            _renderTrainOptions(_trainCache.get(cacheKey), cddList, cddTrigger, cddDisplay);
+            return;
+        }
+
         cddDisplay.innerHTML = '<span style="color:#adb5bd;">查詢中，請稍候…</span>';
 
         try {
@@ -497,28 +540,13 @@
             const res  = await fetch(url);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const json = await res.json();
-
-            if (json.status !== 'success' || !Array.isArray(json.trains) || json.trains.length === 0) {
-                cddDisplay.innerHTML = '<span style="color:#adb5bd;">查無班次，請確認日期及站別</span>';
-                return;
-            }
-
-            json.trains.forEach(t => {
-                const div = document.createElement('div');
-                div.className = 'cdd-item';
-                div.innerHTML = makeTrainHTML(t);
-                div.addEventListener('click', () => cddSelectTrain(t, div));
-                cddList.appendChild(div);
-            });
-
-            cddTrigger.disabled = false;
-            cddDisplay.innerHTML = `<span style="color:#adb5bd;">— 請選擇車次（共 ${json.trains.length} 班）—</span>`;
+            _trainCache.set(cacheKey, json); // 存入 cache
+            _renderTrainOptions(json, cddList, cddTrigger, cddDisplay);
 
         } catch (err) {
             cddDisplay.innerHTML = '<span style="color:#c62828;">查詢失敗，請重試</span>';
-            console.error('loadTrainOptions error:', err);
-        } finally {
             cddTrigger.disabled = false;
+            console.error('loadTrainOptions error:', err);
         }
     }
 
@@ -576,8 +604,8 @@
     }
 
     // 更新任務狀態表格邏輯
-    const ONE_DAY_IN_MS    = 1 * 24 * 60 * 60 * 1000;  // 成功任務：1 天後隱藏
-    const TWO_HOURS_IN_MS  = 120 * 60 * 1000;           // 失敗/取消任務：120 分鐘後隱藏
+    // const ONE_DAY_IN_MS    = 1 * 24 * 60 * 60 * 1000;  // 成功任務：1 天後隱藏
+    // const TWO_HOURS_IN_MS  = 120 * 60 * 1000;           // 失敗/取消任務：120 分鐘後隱藏
 
     // 判斷目前是否應該執行 fetch（頁面可見 + 非背景 + active tab）
     function isPageVisible() {
@@ -629,7 +657,6 @@
                 }
 
                 // --- 根據狀態與 update_time 決定是否隱藏已完成任務 ---
-                // [scott@2025-04-05] Frontend 不需決定是否隱藏已完成任務，由Backend API 根據時間自動過濾，這裡僅提供前端顯示邏輯（如有需要可再加上前端過濾）
                 // const FINAL_STATUSES = ['booking_success', 'booking_failed', 'task_cancelled', 'task_aborted', 'unknown_result'];
                 // if (FINAL_STATUSES.includes(status)) {
                 //     const timeStr = task.update_time || task.submit_time;
@@ -669,7 +696,6 @@
                         'forever': '持續', '30m': '30分鐘', '1h': '1小時',
                         '2h': '2小時', '4h': '4小時', '8h': '8小時'
                     }[retryMode] || '';
-                    // retryBadge = `<br><small style="color:#e65100; font-weight:bold;">第${retryCount}次重試${modeLabel ? '（' + modeLabel + '）' : ''}</small>`;
                     retryBadge = `<br><small style="color:#e65100; font-weight:bold;">${modeLabel ? '(' + modeLabel + ')' : ''}</small>`;
                 }
 

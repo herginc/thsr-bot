@@ -3,6 +3,7 @@ import threading
 
 from typing import Mapping, Any, Optional, Union, List, Dict, Tuple
 
+from datetime import datetime
 from time import sleep
 import requests
 import os
@@ -21,8 +22,10 @@ import re
 
 
 # ----------------------------------------------------------------------------
-# --- Global Configuration ---
+# Global Configuration
 # ----------------------------------------------------------------------------
+DO_NOT_REAL_BOOK = True  # True for testing (不實際送出訂票表單)
+
 BASE_DIR = os.path.dirname(__file__)
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -461,7 +464,7 @@ def check_and_print_errors(html_content: Union[str, bytes]) -> bool:
     
     if error_elements:
         booking_NG = booking_NG + 1
-        logger.info(f"{RED}{BOLD}======= 提交錯誤訊息：======= {RESET}")
+        logger.info(f"{RED}{BOLD}========== 提交錯誤訊息：=========={RESET}")
         
         # 為了避免重複印出 (因為 <ul> 和 <span> 都帶有這個 class)，
         # 我們通常只提取最小範圍的元素（即 <span> 或 <li>）的內容。
@@ -771,7 +774,12 @@ def thsr_submit_booking_form(session: Session, page: str, url_path: str, passcod
             logger.info(CYAN + f"Get booking response from {submit_url}" + RESET)
 
             if (SAVE_BOOKING_PAGE):
-                filename = os.path.join(OUTPUT_DIR, "booking_response.html")
+                # filename = os.path.join(OUTPUT_DIR, "booking_response.html")
+
+                # Generate timestamp: YYYYMMDD_HHMMSS
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = os.path.join(OUTPUT_DIR, f"{timestamp}_post_s1_submit_booking_form.html")
+
                 with open(filename, "w", encoding="utf-8") as file:
                     file.write(response.text)
                     # file.write(page)
@@ -1005,13 +1013,20 @@ def thsr_load_booking_page(session: Session) -> str:
             page = response.text   # or response.text ??
             logger.info(CYAN + f"Get booking page from {BOOKING_PAGE_URL}" + RESET)
             if (SAVE_BOOKING_PAGE):
-                filename = os.path.join(OUTPUT_DIR, "booking_1st_page.html")
+                # filename = os.path.join(OUTPUT_DIR, "booking_1st_page.html")
+
+                # Generate timestamp: YYYYMMDD_HHMMSS
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = os.path.join(OUTPUT_DIR, f"{timestamp}_get_00_booking_main_page.html")
+
                 with open(filename, "w", encoding="utf-8") as file:
                     # file.write(response.text)
                     file.write(page)
                 logger.info(f"HTML content saved to {filename}")
         else:
             logger.info(f"Failed to retrieve content. Status code: {response.status_code}")
+            # 即使載入頁面失敗，我們也要紀錄 status code 與 elapsed time，以便後續分析。
+            # 能SAVE_BOOKING_PAGE 的話就把錯誤頁面也存下來，這樣就有完整的紀錄了。
 
         logger.info(f"resp.status_code = {response.status_code}")
         logger.info(f"request elapsed = {elapsed_ms} ms")
@@ -1044,7 +1059,7 @@ def thsr_run_booking_flow(
 ) -> Tuple[bool, str]:
     """
     執行高鐵訂票流程 (真實版本)。
-    與 booking.thsr_run_booking_flow_with_data 擁有相同的 interface。
+    與 simu_booking.thsr_run_booking_flow_simulation 擁有相同的 interface。
 
     Args:
         task_id:        任務唯一識別碼。
@@ -1169,6 +1184,11 @@ def thsr_run_booking_flow(
             if cancel_event.is_set():
                 raise Exception("取消運行中任務5")
 
+            if DO_NOT_REAL_BOOK:
+                msg_str = f"[跳過訂票] '識別驗證碼'及'送出訂票表單' 前中止訂票"
+                logger.warning(YELLOW + msg_str + RESET)
+                return final_status, msg_str
+
             # sleep_range(2, 3)
             logger.info(f"({captcha_attempt}/{MAX_CAPTCHA_RETRY}) Submitting booking form ... & verifing passcode = {passcode}")
             page = thsr_submit_booking_form(session, page, booking_form_submit_url, passcode, task_data)
@@ -1187,7 +1207,7 @@ def thsr_run_booking_flow(
                     logger.error("已達驗證碼重試上限，放棄此次訂票。")
             else:
                 # 非驗證碼錯誤（例如日期有誤、票種錯誤等），不重試，直接失敗
-                logger.error(f"表單提交失敗 (非驗證碼錯誤)：{errmsg_set}")
+                logger.error(f"訂票表單提交失敗 (非驗證碼錯誤)：{errmsg_set}")
                 break
 
         if is_error_found:
@@ -1198,11 +1218,11 @@ def thsr_run_booking_flow(
 
         status_updater(task_id, 'running', '表單提交成功。選擇車次中...')
 
-        if SAVE_BOOKING_PAGE:
-            filename = os.path.join(OUTPUT_DIR, "booking_2nd_page.html")
-            with open(filename, "w", encoding="utf-8") as file:
-                file.write(page)
-            logger.info(f"HTML content saved to {filename}")
+        # if SAVE_BOOKING_PAGE:
+        #     filename = os.path.join(OUTPUT_DIR, "booking_2nd_page.html")
+        #     with open(filename, "w", encoding="utf-8") as file:
+        #         file.write(page)
+        #     logger.info(f"HTML content saved to {filename}")
 
         # ------------------------------------------------------------------
         # 步驟 6: 判斷目前頁面是第二頁（選車）或第三頁（乘客資料）
@@ -1249,6 +1269,11 @@ def thsr_run_booking_flow(
             if cancel_event.is_set():
                 raise Exception("取消運行中任務7")
 
+            if DO_NOT_REAL_BOOK:
+                msg_str = f"[跳過訂票] '選擇班次' 前中止訂票 (url={BASE_URL + submission_url})"
+                logger.warning(YELLOW + msg_str + RESET)
+                return final_status, msg_str
+
             resp_s3 = session.post(
                 BASE_URL + submission_url,
                 headers=http_headers,
@@ -1260,7 +1285,12 @@ def thsr_run_booking_flow(
             s3_response_text = resp_s3.text
 
             if SAVE_BOOKING_PAGE:
-                filename = os.path.join(OUTPUT_DIR, "booking_3rd_page.html")
+                # filename = os.path.join(OUTPUT_DIR, "booking_3rd_page.html")
+
+                # Generate timestamp: YYYYMMDD_HHMMSS
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = os.path.join(OUTPUT_DIR, f"{timestamp}_post_s3_select_train_no.html")
+
                 with open(filename, "w", encoding="utf-8") as file:
                     file.write(s3_response_text)
                 logger.info(f"HTML content saved to {filename}")
@@ -1356,6 +1386,7 @@ def thsr_run_booking_flow(
             logger.debug(CYAN + "S3 form_data: %s" % _data + RESET)
             return _full_url, _data
 
+        # 最後訂票流程
         # --- 第一次 POST ---
         logger.info("提交乘客資料 (POST 1): personal_id=%r, phone=%r" % (personal_id, phone_num))
         status_updater(task_id, 'running', '送出乘客資料中...')
@@ -1363,13 +1394,25 @@ def thsr_run_booking_flow(
         s3_url1, s3_data1 = _build_s3_post(s3_response_text, override_member_act='')
         sleep_range(1, 2)
 
+        if DO_NOT_REAL_BOOK:
+            msg_str = f"[跳過訂票] 消取 '取票人資訊輸入 及 完成訂位動作'"
+            logger.warning(YELLOW + msg_str + RESET)
+            return final_status, msg_str
+
         resp1 = session.post(s3_url1, headers=http_headers, data=s3_data1,
                              allow_redirects=True, timeout=http_timeout)
+
         resp1.raise_for_status()
         logger.info(CYAN + "S3 POST1: status=%s url=%s" % (resp1.status_code, resp1.url) + RESET)
 
         if SAVE_BOOKING_PAGE:
-            with open(os.path.join(OUTPUT_DIR, "booking_s3_post1.html"), "w", encoding="utf-8") as _f:
+            # filename = os.path.join(OUTPUT_DIR, "booking_s3_post1.html")
+
+            # Generate timestamp: YYYYMMDD_HHMMSS
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = os.path.join(OUTPUT_DIR, f"{timestamp}_post_s31_final_confirmation.html")
+
+            with open(filename, "w", encoding="utf-8") as _f:
                 _f.write(resp1.text)
 
         # feedbackPanelERROR → 表單填寫錯誤，直接失敗
@@ -1404,13 +1447,19 @@ def thsr_run_booking_flow(
                                       allow_redirects=True, timeout=http_timeout)
             resp_final.raise_for_status()
             logger.info(CYAN + "S3 POST2: status=%s url=%s" % (resp_final.status_code, resp_final.url) + RESET)
+
+            if SAVE_BOOKING_PAGE:
+                # filename = os.path.join(OUTPUT_DIR, "booking_final_page.html")
+
+                # Generate timestamp: YYYYMMDD_HHMMSS
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = os.path.join(OUTPUT_DIR, f"{timestamp}_post_s32_early_bird_check.html")
+
+                with open(filename, "w", encoding="utf-8") as _f:
+                    _f.write(resp_final.text)
+                logger.info("HTML content saved to booking_final_page.html")
         else:
             resp_final = resp1
-
-        if SAVE_BOOKING_PAGE:
-            with open(os.path.join(OUTPUT_DIR, "booking_final_page.html"), "w", encoding="utf-8") as _f:
-                _f.write(resp_final.text)
-            logger.info("HTML content saved to booking_final_page.html")
 
         # ------------------------------------------------------------------
         # 步驟 8: 解析訂位代號
@@ -1435,8 +1484,16 @@ def thsr_run_booking_flow(
             result_message = "訂位請求已送出，但搶輸訂位"
             booking_NG += 1
             status_updater(task_id, 'running', result_message)
+
+            # [scott@2026-04-06] 不需做，似乎重複儲存。（儲存訂位失敗頁面以供分析）
             if SAVE_BOOKING_PAGE:
-                with open(os.path.join(OUTPUT_DIR, "booking_failed_page.html"), "w", encoding="utf-8") as _f:
+                # filename = os.path.join(OUTPUT_DIR, "booking_failed_page.html")
+
+                # Generate timestamp: YYYYMMDD_HHMMSS
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = os.path.join(OUTPUT_DIR, f"{timestamp}_post_s32_failed.html")
+
+                with open(filename, "w", encoding="utf-8") as _f:
                     _f.write(resp_final.text)
                 logger.info("Failed page saved to booking_failed_page.html for debugging.")
 
@@ -1445,7 +1502,7 @@ def thsr_run_booking_flow(
     except Exception as e:
         print(f"{RED}Exception occurred - {task_id}: {e}{RESET}")
 
-        if any(keyword in str(e) for keyword in ["取消", "放棄", "中斷", "終止"]):
+        if any(keyword in str(e) for keyword in ["取消", "放棄", "中止", "中斷", "終止"]):
             result_message = str(e)
             status_updater(task_id, 'task_aborted', result_message)
             final_status = 'task_aborted'

@@ -7,16 +7,74 @@ import os
 
 # Define ANSI escape codes for colors and reset
 
+# ========== Original (kept for reference) ==========
 BOLD    = '\033[1m'
+RED     = '\x1b[91m'      # bright red
+GREEN   = '\x1b[92m'      # bright green
+YELLOW  = '\x1b[93m'      # bright yellow
+BLUE    = '\x1b[94m'      # bright blue
+MAGENTA = '\x1b[95m'      # bright magenta
+CYAN    = '\x1b[96m'      # bright cyan
+WHITE   = '\x1b[97m'      # bright white
+RESET   = '\x1b[0m'       # Resets color and styling to default
 
-RED     = '\x1b[91m'
-GREEN   = '\x1b[92m'
-YELLOW  = '\x1b[93m'
-BLUE    = '\x1b[94m'
-MAGENTA = '\x1b[95m'
-CYAN    = '\x1b[96m'
-WHITE   = '\x1b[97m'
-RESET   = '\x1b[0m'     # Resets color and styling
+# ========== Additional Colors ==========
+# Standard (darker) foreground colors (30-37)
+BLACK       = '\x1b[30m'
+DARK_RED    = '\x1b[31m'
+DARK_GREEN  = '\x1b[32m'
+DARK_YELLOW = '\x1b[33m'
+DARK_BLUE   = '\x1b[34m'
+DARK_MAGENTA= '\x1b[35m'
+DARK_CYAN   = '\x1b[36m'
+GRAY        = '\x1b[37m'       # light gray (sometimes called "white" in standard)
+
+# Bright foreground (already have 91-97, but missing bright black)
+BRIGHT_BLACK = '\x1b[90m'      # gray
+BRIGHT_RED   = RED
+BRIGHT_GREEN = GREEN
+BRIGHT_YELLOW= YELLOW
+BRIGHT_BLUE  = BLUE
+BRIGHT_MAGENTA = MAGENTA
+BRIGHT_CYAN  = CYAN
+BRIGHT_WHITE = WHITE
+
+# Background colors (40-47 = standard, 100-107 = bright)
+BG_BLACK        = '\x1b[40m'
+BG_DARK_RED     = '\x1b[41m'
+BG_DARK_GREEN   = '\x1b[42m'
+BG_DARK_YELLOW  = '\x1b[43m'
+BG_DARK_BLUE    = '\x1b[44m'
+BG_DARK_MAGENTA = '\x1b[45m'
+BG_DARK_CYAN    = '\x1b[46m'
+BG_GRAY         = '\x1b[47m'   # light gray background
+
+BG_BRIGHT_BLACK   = '\x1b[100m'
+BG_BRIGHT_RED     = '\x1b[101m'
+BG_BRIGHT_GREEN   = '\x1b[102m'
+BG_BRIGHT_YELLOW  = '\x1b[103m'
+BG_BRIGHT_BLUE    = '\x1b[104m'
+BG_BRIGHT_MAGENTA = '\x1b[105m'
+BG_BRIGHT_CYAN    = '\x1b[106m'
+BG_BRIGHT_WHITE   = '\x1b[107m'
+
+# ========== Additional Styles ==========
+DIM     = '\033[2m'    # faint / dimmed
+ITALIC  = '\033[3m'    # not widely supported
+UNDERLINE = '\033[4m'
+BLINK   = '\033[5m'    # rarely used
+REVERSE = '\033[7m'    # swap foreground and background
+HIDDEN  = '\033[8m'    # invisible (useful for passwords)
+
+# Reset individual styles (optional)
+RESET_BOLD     = '\033[21m'   # or '\033[22m'
+RESET_DIM      = '\033[22m'
+RESET_ITALIC   = '\033[23m'
+RESET_UNDERLINE= '\033[24m'
+RESET_BLINK    = '\033[25m'
+RESET_REVERSE  = '\033[27m'
+RESET_HIDDEN   = '\033[28m'
+
 
 # if sys.platform == "win32":
 if os.name == 'nt':
@@ -30,6 +88,10 @@ print(BLUE      + "Hello, color text ..." + RESET)
 print(MAGENTA   + "Hello, color text ..." + RESET)
 print(CYAN      + "Hello, color text ..." + RESET)
 print(WHITE     + "Hello, color text ..." + RESET)
+
+# 這裡是一些示例，展示如何使用 ANSI escape codes 來格式化輸出。
+# print(f"{BG_BRIGHT_BLUE}{BRIGHT_YELLOW} Hello World! {RESET}")
+# print(f"{DARK_GREEN}Normal green, {BOLD}then bold{RESET_BOLD} back to normal.{RESET}")
 
 
 # ----------------------------------------------------------------------------
@@ -232,5 +294,6 @@ for var_name, value in env_vars_to_check.items():
 # Advanced Configuration
 # ----------------------------------------------------------------------------
 
+# requests/session get or post 後，是否將回應的 HTML 內容保存到本地文件以供調試分析。
 SAVE_BOOKING_PAGE = 1
 
