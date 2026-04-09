@@ -31,7 +31,7 @@ echo ">>> Archiving *.py files and templates/ directory to $TARGET ..."
 
 # 4. Execute tar command
 # -c: create, -z: gzip, -v: verbose, -f: file
-tar -czvf "$TARGET" *.py templates/
+tar -czvf "$TARGET" *.py *.sh *.yaml templates/
 
 # 5. Check execution result
 if [ $? -eq 0 ]; then

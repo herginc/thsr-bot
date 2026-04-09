@@ -745,20 +745,19 @@ def thsr_submit_booking_form(session: Session, page: str, url_path: str, passcod
 
     http_timeout = 15
 
-    USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 Edge/12.246"
-    ACCEPT_STR = "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-    ACCEPT_LANGUAGE = "zh-TW,zh;q=0.8,en-US;q=0.5,en;q=0.3"
-    ACCEPT_ENCODING = "gzip, deflate, br"
+    # USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+    # ACCEPT_STR = "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+    # ACCEPT_LANGUAGE = "zh-TW,zh;q=0.8,en-US;q=0.5,en;q=0.3"
+    # ACCEPT_ENCODING = "gzip, deflate, br"
 
-    ACCEPT_IMG = "image/webp,*/*"
 
-    http_headers: dict = {
-        "Host": THSR_BOOKING_HOST,
-        "User-Agent": USER_AGENT,
-        "Accept": ACCEPT_STR,
-        "Accept-Language": ACCEPT_LANGUAGE,
-        "Accept-Encoding": ACCEPT_ENCODING
-    }
+    # http_headers: dict = {
+    #     "Host": THSR_BOOKING_HOST,
+    #     "User-Agent": USER_AGENT,
+    #     "Accept": ACCEPT_STR,
+    #     "Accept-Language": ACCEPT_LANGUAGE,
+    #     "Accept-Encoding": ACCEPT_ENCODING
+    # }
 
     form_data = get_booking_data(passcode, task_data)
 

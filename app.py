@@ -480,6 +480,18 @@ def update_task_status(task_id: str, new_status: str, message: str):
 # [注意]: 班次若為三碼，程式要自動補 '0'。
 # -----------------------------------------------------------------------------
 
+# -----------------------------------------------------------------------------
+# SearchType	    "S"                 S=單程搜尋, R=來回搜尋
+# Lang	            "TW"                固定為 TW
+# StartStation	    "XinZhu"            THSR 官網使用的英文站名
+# EndStation	    "TaiPei"            THSR 官網使用的英文站名
+# OutWardSearchDate "2026/04/13"        出發日期，格式 YYYY/MM/DD
+# OutWardSearchTime	"08:30"             出發時間：若日期為今天，則為當下時間的下一個半小時 (例如現在是 16:45，則設為 16:00)。若日期為明天之後，則固定為早上5點，確保可查詢到當天所有車次的優惠資訊。
+# ReturnSearchDate  "2026/04/08"        回程日期。單程搜尋時，則為查詢當天日期。
+# ReturnSearchTime  "16:30"             回程時間。單程搜尋時，則為查詢當下時間的下一個半小時 (例如現在是 16:45，則設為 16:00)。
+# DiscountType      "e1b4c4d9-98d7-4c8c-9834-e1d2528750f1,68d9fc7b-7330-44c2-962a-74bc47d2ee8a"     # 此為大學生優惠及早鳥優惠的 GUID
+# -----------------------------------------------------------------------------
+
 import requests
 import json
 
@@ -548,7 +560,7 @@ def check_discounts_for_list(StartStation, EndStation, target_date, train_no_lis
         "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
         "x-requested-with": "XMLHttpRequest",
         "Referer": "https://www.thsrc.com.tw/ArticleContent/A3B630BB-1066-4352-A1EF-58C7B4E8EF7C",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+        "User-Agent": USER_AGENT
     }
 
     results = {}
@@ -1781,6 +1793,49 @@ def api_get_trains():
             msg = '班次查詢失敗，請稍後再試。'
 
         return jsonify({'status': 'error', 'message': msg}), 503
+
+
+@app.route('/api/get_discounts', methods=['POST'])
+def api_get_discounts():
+    """
+    查詢指定班次中，哪些有大學生優惠。
+    Response 只回有優惠的車次 list，最小化 upload 流量。
+
+    Request JSON:
+        {
+            "origin":  "新竹",
+            "dest":    "台北",
+            "date":    "2026-04-27",
+            "trains":  ["0502", "1504", ...]
+        }
+
+    Response JSON:
+        {
+            "status": "success",
+            "discount_trains": ["1504", ...]   // 只含有優惠的車次
+        }
+    """
+    body       = request.get_json(force=True, silent=True) or {}
+    origin     = body.get('origin', '').strip()
+    dest       = body.get('dest', '').strip()
+    date       = body.get('date', '').strip()
+    train_list = body.get('trains', [])
+
+    if not origin or not dest or not date or not train_list:
+        return jsonify({'status': 'error', 'message': '缺少必要參數 origin / dest / date / trains'}), 400
+
+    discount_map = check_discounts_for_list(
+        StartStation=origin,
+        EndStation=dest,
+        target_date=date,
+        train_no_list=train_list,
+        discount_type='大學生',
+    )
+
+    # 只回有優惠的車次，減少 upload 流量
+    discount_trains = [no for no in train_list if discount_map.get(no, False)]
+
+    return jsonify({'status': 'success', 'discount_trains': discount_trains})
 
 
 # [scott@2026-03-26] 移到這裡！確保 Gunicorn 載入時就會啟動 Worker

@@ -385,22 +385,14 @@
     }
 
     // 起訖站互換
-    // 共用 debounce timer（swapStations 與 initAutoTrainLoad 共用同一個）
-    let _debounceTimer = null;
-    function debouncedLoadTrainOptions() {
-        const method = document.querySelector('input[name="bookingMethod"]:checked');
-        if (!method || method.value !== 'radio33') return;
-        clearTimeout(_debounceTimer);
-        _debounceTimer = setTimeout(loadTrainOptions, 1000);
-    }
-
     function swapStations() {
         const startSelect = document.querySelector('select[name="start_station"]');
         const destSelect = document.querySelector('select[name="end_station"]');
         const temp = startSelect.value;
         startSelect.value = destSelect.value;
         destSelect.value = temp;
-        debouncedLoadTrainOptions();
+        const method = document.querySelector('input[name="bookingMethod"]:checked');
+        if (method && method.value === 'radio33') loadTrainOptions();
     }
 
     // 搜尋方式與輸入框連動
@@ -430,15 +422,22 @@
         updateInputs();
     }
 
-    // 自動觸發查詢：乘車日期、出發站、到達站任一變動時（debounce 1000ms，避免連續操作重複發 request）
+    // 自動觸發查詢：乘車日期、出發站、到達站任一變動時（debounce 2000ms，避免連續操作重複發 request）
     function initAutoTrainLoad() {
         const dateInput = document.getElementById('travel-date-input');
         const startSel  = document.querySelector('select[name="start_station"]');
         const endSel    = document.querySelector('select[name="end_station"]');
 
-        dateInput.addEventListener('change', debouncedLoadTrainOptions);
-        startSel.addEventListener('change', debouncedLoadTrainOptions);
-        endSel.addEventListener('change', debouncedLoadTrainOptions);
+        let _debounceTimer = null;
+        function onTrigger() {
+            const method = document.querySelector('input[name="bookingMethod"]:checked');
+            if (!method || method.value !== 'radio33') return;
+            clearTimeout(_debounceTimer);
+            _debounceTimer = setTimeout(loadTrainOptions, 2000);
+        }
+        dateInput.addEventListener('change', onTrigger);
+        startSel.addEventListener('change', onTrigger);
+        endSel.addEventListener('change', onTrigger);
     }
 
     // -----------------------------------------------------------------------
@@ -488,17 +487,29 @@
     });
 
     // -----------------------------------------------------------------------
-    // 車次查詢：呼叫後端 /api/get_trains，全部班次直接顯示
+    // 車次查詢：優先直接向 TDX 查詢；TDX 429 時 fallback 到 /api/get_trains
     // -----------------------------------------------------------------------
+
+    // 如您尚未註冊平臺會員帳號，或未以帳號登入，您將僅能以「訪客模式」使用平臺服務，
+    // 包含：限以瀏覽器存取，限使用【基礎服務】，且限制每個呼叫來源端IP每日存取至多20次。
+
+    // 中文站名 → TDX StationID 對照表
+    const STATION_ID_MAP = {
+        '南港': '0990', '台北': '1000', '板橋': '1010', '桃園': '1020',
+        '新竹': '1030', '苗栗': '1035', '台中': '1040', '彰化': '1043',
+        '雲林': '1047', '嘉義': '1050', '台南': '1060', '左營': '1070',
+    };
+    const TDX_BASE = 'https://tdx.transportdata.tw/api/basic/v2/Rail/THSR/DailyTimetable/OD';
+
     const _trainCache = new Map(); // key: "起站|訖站|日期"
 
-    function _renderTrainOptions(json, cddList, cddTrigger, cddDisplay) {
-        if (json.status !== 'success' || !Array.isArray(json.trains) || json.trains.length === 0) {
+    function _renderTrainOptions(trains, cddList, cddTrigger, cddDisplay) {
+        if (!Array.isArray(trains) || trains.length === 0) {
             cddDisplay.innerHTML = '<span style="color:#adb5bd;">查無班次，請確認日期及站別</span>';
             cddTrigger.disabled = false;
             return;
         }
-        json.trains.forEach(t => {
+        trains.forEach(t => {
             const div = document.createElement('div');
             div.className = 'cdd-item';
             div.innerHTML = makeTrainHTML(t);
@@ -506,18 +517,27 @@
             cddList.appendChild(div);
         });
         cddTrigger.disabled = false;
-        const _d = document.getElementById("travel-date-input").value; const _md = _d ? _d.slice(5).replace("-", "/") : ""; cddDisplay.innerHTML = `<span style="color:#333;">— 請選擇${_md}車次（共${json.trains.length}班）—</span>`;
+        const _d = document.getElementById('travel-date-input').value;
+		const _md = _d ? _d.slice(5).replace('-', '/') : '';
+		cddDisplay.innerHTML = `<span style="color:#333;">— 請選擇 ${_md} 車次（共 ${trains.length} 班）—</span>`;
     }
 
     async function loadTrainOptions() {
         const startStation = document.querySelector('select[name="start_station"]').value;
         const endStation   = document.querySelector('select[name="end_station"]').value;
-        const travelDate   = document.getElementById('travel-date-input').value;
+        const travelDate   = document.getElementById('travel-date-input').value; // YYYY-MM-DD
         const cddList      = document.getElementById('cdd-list');
         const cddTrigger   = document.getElementById('cdd-trigger');
         const cddDisplay   = document.getElementById('cdd-display');
 
         if (!travelDate || !startStation || !endStation || startStation === endStation) return;
+
+        const originId = STATION_ID_MAP[startStation];
+        const destId   = STATION_ID_MAP[endStation];
+        if (!originId || !destId) {
+            cddDisplay.innerHTML = '<span style="color:#c62828;">不支援的站名</span>';
+            return;
+        }
 
         cddList.innerHTML = '';
         cddTrigger.disabled = true;
@@ -534,14 +554,66 @@
         cddDisplay.innerHTML = '<span style="color:#adb5bd;">查詢中，請稍候…</span>';
 
         try {
-            const url = getApiUrl(
-                `/api/get_trains?origin=${encodeURIComponent(startStation)}&destination=${encodeURIComponent(endStation)}&date=${travelDate}`
-            );
-            const res  = await fetch(url);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const json = await res.json();
-            _trainCache.set(cacheKey, json); // 存入 cache
-            _renderTrainOptions(json, cddList, cddTrigger, cddDisplay);
+            // --- 優先直接向 TDX 查詢（不耗用 server 資源）---
+            const originId = STATION_ID_MAP[startStation];
+            const destId   = STATION_ID_MAP[endStation];
+            const tdxUrl   = `${TDX_BASE}/${originId}/to/${destId}/${travelDate}`;
+            const tdxRes   = await fetch(tdxUrl);
+
+            let trains;
+            if (tdxRes.status === 429) {
+                // TDX 超過每日 query 次數限制，改走 /api/get_trains
+                console.warn('TDX rate limit exceeded (429)，改走 /api/get_trains');
+                const fallbackUrl = getApiUrl(
+                    `/api/get_trains?origin=${encodeURIComponent(startStation)}&destination=${encodeURIComponent(endStation)}&date=${travelDate}`
+                );
+                const fallbackRes = await fetch(fallbackUrl);
+                if (!fallbackRes.ok) throw new Error(`/api/get_trains HTTP ${fallbackRes.status}`);
+                const json = await fallbackRes.json();
+                if (json.status !== 'success' || !Array.isArray(json.trains)) throw new Error('api/get_trains 回傳格式錯誤');
+                trains = json.trains; // 已是內部格式，直接用
+            } else {
+                if (!tdxRes.ok) throw new Error(`TDX HTTP ${tdxRes.status}`);
+                const data = await tdxRes.json();
+                // 將 TDX 格式轉換為內部使用的格式（has_discount 先設 false，稍後補查）
+                trains = data.map(item => ({
+                    train_no:     item.DailyTrainInfo.TrainNo,
+                    dep_time:     item.OriginStopTime.DepartureTime,
+                    arr_time:     item.DestinationStopTime.ArrivalTime,
+                    has_discount: false,
+                }));
+
+                // --- 向 server 查詢大學生優惠（非阻塞：先 render，查完再更新）---
+                const trainNos = trains.map(t => t.train_no);
+                fetch(getApiUrl('/api/get_discounts'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ origin: startStation, dest: endStation, date: travelDate, trains: trainNos })
+                })
+                .then(r => r.json())
+                .then(result => {
+                    if (result.status !== 'success') return;
+                    // server 只回有優惠的車次 list，轉成 Set 方便比對
+                    const discountSet = new Set(result.discount_trains);
+                    let changed = false;
+                    trains.forEach(t => {
+                        const d = discountSet.has(t.train_no);
+                        if (t.has_discount !== d) {
+                            t.has_discount = d;
+                            changed = true;
+                        }
+                    });
+                    if (!changed) return;
+                    // 更新 cache 後重新 render
+                    _trainCache.set(cacheKey, trains);
+                    cddList.innerHTML = '';
+                    _renderTrainOptions(trains, cddList, cddTrigger, cddDisplay);
+                })
+                .catch(err => console.warn('get_discounts 查詢失敗（略過）:', err));
+            }
+
+            _trainCache.set(cacheKey, trains); // 存入 cache（先存，優惠查完後再更新）
+            _renderTrainOptions(trains, cddList, cddTrigger, cddDisplay);
 
         } catch (err) {
             cddDisplay.innerHTML = '<span style="color:#c62828;">查詢失敗，請重試</span>';
@@ -603,10 +675,6 @@
         }
     }
 
-    // 更新任務狀態表格邏輯
-    // const ONE_DAY_IN_MS    = 1 * 24 * 60 * 60 * 1000;  // 成功任務：1 天後隱藏
-    // const TWO_HOURS_IN_MS  = 120 * 60 * 1000;           // 失敗/取消任務：120 分鐘後隱藏
-
     // 判斷目前是否應該執行 fetch（頁面可見 + 非背景 + active tab）
     function isPageVisible() {
         return document.visibilityState === 'visible';
@@ -655,24 +723,6 @@
                 if (status === 'pending' || status === 'running' || status === 'cancelling') {
                     newActiveTasks = true;
                 }
-
-                // --- 根據狀態與 update_time 決定是否隱藏已完成任務 ---
-                // const FINAL_STATUSES = ['booking_success', 'booking_failed', 'task_cancelled', 'task_aborted', 'unknown_result'];
-                // if (FINAL_STATUSES.includes(status)) {
-                //     const timeStr = task.update_time || task.submit_time;
-                //     if (timeStr) {
-                //         try {
-                //             const isoTimeStr = timeStr.replace(/\//g, '-').replace(' ', 'T');
-                //             const elapsedMs  = nowTime - new Date(isoTimeStr).getTime();
-                //             const threshold  = (status === 'booking_success') ? ONE_DAY_IN_MS : TWO_HOURS_IN_MS;
-                //             if (elapsedMs > threshold) {
-                //                 return; // 超過門檻，跳過顯示
-                //             }
-                //         } catch (e) {
-                //             console.error('Invalid time format:', timeStr);
-                //         }
-                //     }
-                // }
 
                 // --- 狀態中文標籤 ---
                 const retryCount = task.retry_count || 0;
