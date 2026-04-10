@@ -2,6 +2,12 @@
 # app.py (Flask Web Server) - 支援任務隊列、背景執行緒與取消
 # =======================================================
 
+# =======================================================
+# 一台Server: 負責查票 (重複動作頻繁) (python request) (不求快)
+# 一台Server: 負責訂票 (只有動作一次) (playwright or selnium)
+# 以上Server動作行為都要跟瀏覽器(at least 無痕模式)一樣 (Browser fingerprinting)
+# =======================================================
+
 # Must for Render environment
 import os
 # gevent monkey patching can interfere with debuggers.
@@ -86,6 +92,7 @@ TASKS_FILE        = os.path.join(JSON_DIR, "tasks.json")
 HISTORY_FILE      = os.path.join(JSON_DIR, "history.json")
 ADMIN_FILE        = os.path.join(JSON_DIR, "admin.json")
 TIMETABLE_FILE    = os.path.join(JSON_DIR, "timetable_cache.json")  # TDX 班次查詢快取
+DISCOUNT_CACHE_FILE = os.path.join(JSON_DIR, "discount_cache.json") # THSR 優惠查詢快取
 
 # 使用 timedelta 支援 Python 3.8
 CST_TIMEZONE = timezone(timedelta(hours=8))
@@ -495,15 +502,37 @@ def update_task_status(task_id: str, new_status: str, message: str):
 import requests
 import json
 
-def check_discounts_for_list(StartStation, EndStation, target_date, train_no_list, discount_type):
+def check_discounts_for_list(StartStation, EndStation, target_date, discount_type="大學生"):
     """
     批次檢查特定日期、多個車次是否有特定類別的優惠。
     """
-    logger.debug(f">>> 開始查詢: {StartStation}→{EndStation} date={target_date} type={discount_type} trains={train_no_list}")
+    logger.debug(f">>> 開始查詢: {StartStation}→{EndStation} date={target_date} type={discount_type}")
 
-    target_date = target_date.replace('-','/')
+    target_date = target_date.replace('-', '/')
+    cache_key = f"{discount_type}|{target_date}|{StartStation}|{EndStation}"
 
-    today = datetime.today().strftime('%Y/%m/%d')
+    # 清理過期的優惠快取，確保直接查 /api/get_discounts 時也會移除舊資料
+    cleanup_timetable_cache()
+
+    # ── 嘗試讀取快取 ──
+    with data_lock:
+        cache = load_json(DISCOUNT_CACHE_FILE) or {}
+        if cache_key in cache:
+            cached_list = cache[cache_key]
+            logger.info(f"[優惠快取 HIT] ({cache_key}) 共 {len(cached_list)} 班")
+            return cached_list
+
+    now_cst = datetime.now(CST_TIMEZONE)
+    today = now_cst.strftime('%Y/%m/%d')
+
+    def _search_time_for_date(date_str: str) -> str:
+        if date_str == today:
+            if now_cst.minute < 30:
+                return f"{now_cst.hour:02d}:00"
+            return f"{now_cst.hour:02d}:30"
+        return "05:00"
+
+    search_time = _search_time_for_date(target_date)
 
     api_url = "https://www.thsrc.com.tw/TimeTable/Search"
     
@@ -517,7 +546,7 @@ def check_discounts_for_list(StartStation, EndStation, target_date, train_no_lis
     target_guid = discount_map.get(discount_type)
     if not target_guid:
         logger.error(f"不支援的優惠類別 '{discount_type}'")
-        return {}
+        return []
 
     # logger.debug(f"優惠 GUID: {target_guid}")
 
@@ -548,9 +577,9 @@ def check_discounts_for_list(StartStation, EndStation, target_date, train_no_lis
         "StartStation": start_en,
         "EndStation": end_en,
         "OutWardSearchDate": target_date,
-        "OutWardSearchTime": "05:00",
-        "ReturnSearchDate": today,
-        "ReturnSearchTime": "05:00",
+        "OutWardSearchTime": search_time,
+        "ReturnSearchDate": target_date,
+        "ReturnSearchTime": search_time,
         "DiscountType": target_guid
     }
 
@@ -563,7 +592,7 @@ def check_discounts_for_list(StartStation, EndStation, target_date, train_no_lis
         "User-Agent": USER_AGENT
     }
 
-    results = {}
+    available_trains = []
     try:
         session = requests.Session()
         logger.debug(f"GET https://www.thsrc.com.tw/ (取得 cookie)...")
@@ -587,24 +616,20 @@ def check_discounts_for_list(StartStation, EndStation, target_date, train_no_lis
             train_items = dep_table.get("TrainItem", [])
             logger.debug(f"TrainItem 筆數: {len(train_items)}")
 
-            # 取得所有有該優惠的車次編號
+            # 取得所有有該優惠的車次編號                
             available_trains = [
                 t.get("TrainNumber")
                 for t in train_items
             ]
             logger.info(f"{discount_type}優惠車次清單: {available_trains}")
 
-            # 比對清單
-            for no in train_no_list:
-                matched = no in available_trains
-                results[no] = matched
-                if matched:
-                    # logger.debug(f"✔ 車次 {no} 有優惠")
-                    pass
-                else:
-                    # logger.debug(f"車次 {no} 無優惠")
-                    pass
-
+            # ── 寫入快取 ──
+            with data_lock:
+                cache = load_json(DISCOUNT_CACHE_FILE) or {}
+                cache[cache_key] = available_trains
+                save_json(DISCOUNT_CACHE_FILE, cache)
+                logger.info(f"[優惠快取寫入] key={cache_key}")
+                
         else:
             logger.error(f"API 請求失敗: HTTP {response.status_code}, body: {response.text[:300]}")
 
@@ -621,8 +646,7 @@ def check_discounts_for_list(StartStation, EndStation, target_date, train_no_lis
     except Exception as e:
         logger.error(f"執行錯誤: {e}", exc_info=True)
 
-    logger.debug(f"<<< 查詢結果: {results}")
-    return results
+    return available_trains
 
 
 # ----------------------------------------------------------------------------
@@ -1687,13 +1711,34 @@ def cleanup_timetable_cache():
             save_json(TIMETABLE_FILE, new_cache)
             logger.info(f"[Cache Cleanup] 已從快取中移除 {removed_count} 筆過期班次資料。")
 
+        # --- 同時清理優惠快取 ---
+        d_cache = load_json(DISCOUNT_CACHE_FILE)
+        if d_cache and isinstance(d_cache, dict):
+            new_d_cache = {}
+            d_removed = 0
+            for k, v in d_cache.items():
+                try:
+                    # key 格式："{type}|{date}|{origin}|{destination}"，date 為 YYYY/MM/DD
+                    d_date_str = k.split('|')[1]
+                    d_cache_date = datetime.strptime(d_date_str, '%Y/%m/%d').date()
+                    if d_cache_date >= today:
+                        new_d_cache[k] = v
+                    else:
+                        d_removed += 1
+                except (ValueError, IndexError):
+                    d_removed += 1
+            
+            if d_removed > 0:
+                save_json(DISCOUNT_CACHE_FILE, new_d_cache)
+                logger.info(f"[Discount Cache Cleanup] 已從快取中移除 {d_removed} 筆過期優惠資料。")
+
         last_cache_cleanup_date = today
     
 # ----------------------------------------------------------------------------
 # 根據日期及起訖站，查詢高鐵班次下拉選單資料。
 # TDX_APP_ID, TDX_APP_KEY 由 config.py 提供 (from config import *)
 #
-# 快取機制（timetable_cache.json）：
+# 快取機制（timetable_cache.json, discount_cache.json）：
 #   key 格式："{date}|{origin}|{destination}"  例："2026-03-28|新竹|台北"
 #   value：trains 陣列（含 dep_time, arr_time, has_discount ...）
 #   優先讀取快取；快取 miss 才呼叫 TDX API，成功後寫入快取。
@@ -1751,19 +1796,17 @@ def api_get_trains():
         train_no_list = [t['train_no'] for t in trains]
         logger.info(f'[TDX] ({date} {origin}-{destination}) 高鐵班次共有 {len(train_no_list)} 班: {train_no_list}')
 
-        # 查詢大學生優惠，失敗時回傳空 dict，不影響主流程
-        discount_map = check_discounts_for_list(
+        # 查詢大學生優惠，失敗時回傳空 list，不影響主流程
+        discount_list = check_discounts_for_list(
             StartStation=origin,
             EndStation=destination,
             target_date=date,
-            train_no_list=train_no_list,
             discount_type='大學生',
         )
 
         # 將優惠資訊合併到班次資料中（若有）
         for t in trains:
-            has_discount = discount_map.get(t['train_no'], False)
-            t['has_discount'] = has_discount
+            t['has_discount'] = t['train_no'] in discount_list
 
         # ── 寫入快取 ──
         try:
@@ -1795,19 +1838,14 @@ def api_get_trains():
         return jsonify({'status': 'error', 'message': msg}), 503
 
 
-@app.route('/api/get_discounts', methods=['POST'])
+@app.route('/api/get_discounts', methods=['GET'])
 def api_get_discounts():
     """
     查詢指定班次中，哪些有大學生優惠。
     Response 只回有優惠的車次 list，最小化 upload 流量。
 
-    Request JSON:
-        {
-            "origin":  "新竹",
-            "dest":    "台北",
-            "date":    "2026-04-27",
-            "trains":  ["0502", "1504", ...]
-        }
+    Request Query:
+        /api/get_discounts?origin=新竹&dest=台北&date=2026-04-27
 
     Response JSON:
         {
@@ -1815,27 +1853,27 @@ def api_get_discounts():
             "discount_trains": ["1504", ...]   // 只含有優惠的車次
         }
     """
-    body       = request.get_json(force=True, silent=True) or {}
-    origin     = body.get('origin', '').strip()
-    dest       = body.get('dest', '').strip()
-    date       = body.get('date', '').strip()
-    train_list = body.get('trains', [])
+    origin = request.args.get('origin', '').strip()
+    dest = request.args.get('dest', '').strip()
+    date = request.args.get('date', '').strip()
 
-    if not origin or not dest or not date or not train_list:
-        return jsonify({'status': 'error', 'message': '缺少必要參數 origin / dest / date / trains'}), 400
+    if not origin or not dest or not date:
+        return jsonify({'status': 'error', 'message': '缺少必要參數 origin / dest / date'}), 400
 
-    discount_map = check_discounts_for_list(
+    discount_list = check_discounts_for_list(
         StartStation=origin,
         EndStation=dest,
         target_date=date,
-        train_no_list=train_list,
         discount_type='大學生',
     )
 
-    # 只回有優惠的車次，減少 upload 流量
-    discount_trains = [no for no in train_list if discount_map.get(no, False)]
+    response = jsonify({'status': 'success', 'discount_trains': discount_list})
+    response.headers['Cache-Control'] = 'public, max-age=259200'        # 3 天快取，減少重複查詢同一班次的負擔
 
-    return jsonify({'status': 'success', 'discount_trains': discount_trains})
+    # 此 API 會根據車次列表動態回傳折扣結果，瀏覽器端不可長時間快取，以免測試時讀到舊資料。
+    # response.headers['Cache-Control'] = 'private, max-age=0, no-cache, no-store, must-revalidate'
+
+    return response
 
 
 # [scott@2026-03-26] 移到這裡！確保 Gunicorn 載入時就會啟動 Worker

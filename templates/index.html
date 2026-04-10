@@ -584,11 +584,14 @@
                 }));
 
                 // --- 向 server 查詢大學生優惠（非阻塞：先 render，查完再更新）---
-                const trainNos = trains.map(t => t.train_no);
-                fetch(getApiUrl('/api/get_discounts'), {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ origin: startStation, dest: endStation, date: travelDate, trains: trainNos })
+                const discountUrl = getApiUrl(
+                    `/api/get_discounts?origin=${encodeURIComponent(startStation)}` +
+                    `&dest=${encodeURIComponent(endStation)}` +
+                    `&date=${encodeURIComponent(travelDate)}`
+                );
+                fetch(discountUrl, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' }
                 })
                 .then(r => r.json())
                 .then(result => {
